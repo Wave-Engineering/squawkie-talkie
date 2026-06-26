@@ -25,6 +25,7 @@
 
 import type { List, Squawk, SquawkState } from "../server/types.ts";
 import { ensureInitials } from "./initials.ts";
+import { setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
 
 /** Idle window before an edited squawk autosaves. */
@@ -187,6 +188,7 @@ export async function renderList(
   try {
     detail = await getList(id);
   } catch {
+    setActiveView(null); // no live rows to patch on a failed load
     renderError(container, listId);
     return;
   }
@@ -202,10 +204,45 @@ export async function renderList(
 
   // The client model, keyed by squawk id, kept in step with surgical updates.
   const model = new Map<number, Squawk>();
+  // The built rows, keyed by squawk id — the seam realtime (#9) patches.
+  const rowHandles = new Map<number, RowHandle>();
 
   // Row 0: the always-empty new-squawk input.
   const newRow = buildNewRow();
   stack.append(newRow.el);
+
+  /**
+   * Insert a squawk's row directly beneath row 0 (newest on top), unless its row
+   * already exists. Shared by local creates and realtime `squawk.created`, so a
+   * viewer's own create and the echoed broadcast don't double-insert.
+   */
+  function insertSquawk(squawk: Squawk): void {
+    if (rowHandles.has(squawk.id)) {
+      return;
+    }
+    model.set(squawk.id, squawk);
+    const handle = buildSquawkRow(squawk, id, initials, model);
+    rowHandles.set(squawk.id, handle);
+    newRow.el.insertAdjacentElement("afterend", handle.el);
+  }
+
+  /**
+   * Apply a remote `squawk.updated`. The model and state always update
+   * (last-write-wins); the input value updates only when `applyToInput` is true
+   * (i.e. this row's box is not the one currently focused).
+   */
+  function patchSquawk(squawk: Squawk, applyToInput: boolean): void {
+    const handle = rowHandles.get(squawk.id);
+    if (!handle) {
+      insertSquawk(squawk); // missed the create — land it now
+      return;
+    }
+    model.set(squawk.id, squawk);
+    handle.setState(squawk.state);
+    if (applyToInput) {
+      handle.setText(squawk.text);
+    }
+  }
 
   newRow.input.addEventListener("keydown", (event) => {
     const decision = onEnter({
@@ -220,10 +257,7 @@ export async function renderList(
     const text = newRow.input.value;
     createSquawk(id, text, initials)
       .then((created) => {
-        model.set(created.id, created);
-        const row = buildSquawkRow(created, id, initials, model);
-        // Newest on top: insert directly beneath the new-squawk row.
-        newRow.el.insertAdjacentElement("afterend", row);
+        insertSquawk(created);
         newRow.input.value = "";
         newRow.input.focus();
       })
@@ -233,11 +267,24 @@ export async function renderList(
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
     model.set(squawk.id, squawk);
-    stack.append(buildSquawkRow(squawk, id, initials, model));
+    const handle = buildSquawkRow(squawk, id, initials, model);
+    rowHandles.set(squawk.id, handle);
+    stack.append(handle.el);
   }
 
   container.append(title, stack);
   newRow.input.focus();
+
+  // Realtime seam (#9): this mount is the active sink while the list is shown.
+  // A squawk created/updated by another viewer on this list lands live; the
+  // focused-box rule (in realtime.ts) decides whether an update overwrites the
+  // input the viewer is currently typing in.
+  setActiveView({
+    kind: "detail",
+    listId: id,
+    upsertSquawk: (squawk) => insertSquawk(squawk),
+    patchSquawk,
+  });
 }
 
 /** Build the always-empty new-squawk row (row 0). */
@@ -262,15 +309,28 @@ function buildNewRow(): { el: HTMLElement; input: HTMLInputElement } {
 }
 
 /**
+ * A built squawk row plus the surgical patch points realtime (#9) drives:
+ * `setText` overwrites the input value (and resyncs the autosave baseline so a
+ * later blur doesn't redundantly re-save the remote value); `setState` recolors
+ * the row and syncs the state dropdown.
+ */
+interface RowHandle {
+  el: HTMLElement;
+  setText(text: string): void;
+  setState(state: SquawkState): void;
+}
+
+/**
  * Build one existing-squawk row: `[seq] [text input] [state select]`, keyed by
- * `data-squawk-id`, with autosave + state-change handlers wired in.
+ * `data-squawk-id`, with autosave + state-change handlers wired in. Returns a
+ * {@link RowHandle} so realtime can patch the row without rebuilding it.
  */
 function buildSquawkRow(
   squawk: Squawk,
   listId: number,
   initials: string,
   model: Map<number, Squawk>,
-): HTMLElement {
+): RowHandle {
   const row = document.createElement("div");
   row.className = `squawk-row ${stateClass(squawk.state)}`;
   row.dataset.squawkId = String(squawk.id);
@@ -293,9 +353,14 @@ function buildSquawkRow(
     if (text === lastSaved) {
       return;
     }
-    lastSaved = text;
+    // Update the saved-baseline only AFTER the PATCH succeeds. Setting it
+    // before the await would make the `text === lastSaved` guard suppress every
+    // retry on a failed save, silently dropping the user's edit on blur/idle.
     updateSquawk(squawk.id, { text }, initials)
-      .then((updated) => model.set(updated.id, updated))
+      .then((updated) => {
+        lastSaved = text;
+        model.set(updated.id, updated);
+      })
       .catch((err) => console.error("autosave failed", err));
   }, AUTOSAVE_IDLE_MS);
 
@@ -334,7 +399,20 @@ function buildSquawkRow(
   });
 
   row.append(seq, input, select);
-  return row;
+
+  return {
+    el: row,
+    setText: (text: string): void => {
+      input.value = text;
+      // Resync the autosave baseline: the remote value is now the saved value,
+      // so a later focus+blur with no edit won't trigger a redundant PATCH.
+      lastSaved = text;
+    },
+    setState: (state: SquawkState): void => {
+      applyState(row, state);
+      select.value = state;
+    },
+  };
 }
 
 /** Swap the row's state color class to `state` (surgical, no rebuild). */

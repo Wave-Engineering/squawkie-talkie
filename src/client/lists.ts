@@ -13,6 +13,7 @@
  */
 import type { List } from "../server/types.ts";
 import { createList, deleteList, getLists } from "./api.ts";
+import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,9 @@ export function renderLists(container: HTMLElement): void {
   }
 
   function addList(list: List): void {
+    if (model.some((l) => l.id === list.id)) {
+      return; // already shown — keep create idempotent (realtime + initial load)
+    }
     model.push(list);
     rows.append(buildRow(list));
     syncEmpty();
@@ -234,6 +238,21 @@ export function renderLists(container: HTMLElement): void {
     row.append(open, controls);
     return row;
   }
+
+  // --- realtime seam (#9) --------------------------------------------------
+  // Register this mount as the active realtime sink: a list created or deleted
+  // by another viewer is applied live to these same rows. Both ops are
+  // idempotent (addList de-dupes; removeList no-ops on a missing row).
+  setActiveView({
+    kind: "lists",
+    upsertList: (list) => addList(list),
+    removeList: (id) => {
+      const row = rows.querySelector<HTMLElement>(`[data-list-id="${id}"]`);
+      if (row) {
+        removeList(id, row);
+      }
+    },
+  });
 
   // --- initial load --------------------------------------------------------
 
