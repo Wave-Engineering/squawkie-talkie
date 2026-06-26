@@ -28,6 +28,7 @@ import {
   listSquawks,
   updateSquawk,
 } from "./db.ts";
+import { broadcast } from "./sse.ts";
 import type { SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
@@ -116,9 +117,11 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
       return json({ ...list, squawks: listSquawks(id) });
     }
     if (method === "DELETE") {
-      return deleteList(id)
-        ? json({ ok: true })
-        : json({ error: "list not found" }, 404);
+      if (deleteList(id)) {
+        broadcast({ type: "list.deleted", id });
+        return json({ ok: true });
+      }
+      return json({ error: "list not found" }, 404);
     }
     return json({ error: "method not allowed" }, 405);
   }
@@ -165,7 +168,9 @@ async function createListRoute(req: Request): Promise<Response> {
   if (!name) {
     return json({ error: "name is required" }, 400);
   }
-  return json(createList(name), 201);
+  const list = createList(name);
+  broadcast({ type: "list.created", list });
+  return json(list, 201);
 }
 
 /** POST /api/lists/:id/squawks — body `{ text, initials }`. */
@@ -191,7 +196,9 @@ async function createSquawkRoute(
     return json({ error: "initials are required" }, 400);
   }
 
-  return json(createSquawk(listId, text, initials), 201);
+  const squawk = createSquawk(listId, text, initials);
+  broadcast({ type: "squawk.created", squawk });
+  return json(squawk, 201);
 }
 
 /** PATCH /api/squawks/:id — body `{ text?, state?, initials? }`. */
@@ -227,7 +234,9 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
   }
 
   try {
-    return json(updateSquawk(id, patch, initials));
+    const squawk = updateSquawk(id, patch, initials);
+    broadcast({ type: "squawk.updated", squawk });
+    return json(squawk);
   } catch (err) {
     if (err instanceof Error && err.message.includes("not found")) {
       return json({ error: "squawk not found" }, 404);
