@@ -3,6 +3,7 @@
  *
  * Routes:
  *   GET /healthz        -> 200 { ok: true }
+ *   /api/...            -> JSON REST API (see api.ts), checked before static
  *   GET <public asset>  -> the matching file under public/ (e.g. /styles.css,
  *                          /dist/app.js), content-type inferred from extension
  *   *                   -> public/index.html (SPA shell fallback)
@@ -10,6 +11,8 @@
  * The route logic is exported as `routeRequest` (and `fetch`) so tests can
  * exercise it without binding a port.
  */
+
+import { handleApi } from "./api.ts";
 
 const PUBLIC_DIR = new URL("../../public/", import.meta.url).pathname;
 const INDEX_HTML_PATH = `${PUBLIC_DIR}index.html`;
@@ -19,6 +22,13 @@ export async function routeRequest(req: Request): Promise<Response> {
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     return Response.json({ ok: true });
+  }
+
+  // JSON REST API. Returns null for non-/api paths so static serving still
+  // works; must run before the static/SPA fallback.
+  const apiResponse = handleApi(req, url);
+  if (apiResponse) {
+    return apiResponse;
   }
 
   // Serve static assets out of public/ (styles, built client bundle, etc.).
