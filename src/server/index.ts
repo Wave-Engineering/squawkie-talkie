@@ -3,6 +3,7 @@
  *
  * Routes:
  *   GET /healthz        -> 200 { ok: true }
+ *   GET /api/stream     -> Server-Sent Events stream (see sse.ts)
  *   /api/...            -> JSON REST API (see api.ts), checked before static
  *   GET <public asset>  -> the matching file under public/ (e.g. /styles.css,
  *                          /dist/app.js), content-type inferred from extension
@@ -13,6 +14,7 @@
  */
 
 import { handleApi } from "./api.ts";
+import { subscribe } from "./sse.ts";
 
 const PUBLIC_DIR = new URL("../../public/", import.meta.url).pathname;
 const INDEX_HTML_PATH = `${PUBLIC_DIR}index.html`;
@@ -22,6 +24,11 @@ export async function routeRequest(req: Request): Promise<Response> {
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     return Response.json({ ok: true });
+  }
+
+  // Server-Sent Events stream. Checked before handleApi (which would 404 it).
+  if (req.method === "GET" && url.pathname === "/api/stream") {
+    return subscribe();
   }
 
   // JSON REST API. Returns null for non-/api paths so static serving still
