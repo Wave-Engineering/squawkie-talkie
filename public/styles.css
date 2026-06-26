@@ -134,6 +134,76 @@ body {
   border-radius: var(--radius);
 }
 
+/* List-detail view — squawk stack editor (#8) */
+.detail__title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.detail__stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A squawk row: [seq] [text input] [state select]. Newest on top. */
+.squawk-row {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border: 1px solid rgba(230, 237, 243, 0.08);
+  border-left: 3px solid transparent;
+  border-radius: var(--radius);
+}
+
+/* Row 0 — the always-empty new-squawk input. */
+.squawk-row--new {
+  background: transparent;
+  border-left-color: var(--accent);
+}
+
+.squawk-row__seq {
+  font-size: 0.875rem;
+  text-align: right;
+  color: rgba(230, 237, 243, 0.55);
+}
+
+.squawk-row__text,
+.squawk-row__state {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid rgba(230, 237, 243, 0.12);
+  border-radius: var(--radius);
+}
+
+.squawk-row__text {
+  width: 100%;
+}
+
+.squawk-row__state {
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+/* Per-state edge color — open / retired / recorded are visually distinct.
+   (The .state-* color classes above also tint the row's seq + chrome.) */
+.squawk-row.state-open {
+  border-left-color: var(--state-open);
+}
+.squawk-row.state-retired {
+  border-left-color: var(--state-retired);
+}
+.squawk-row.state-recorded {
+  border-left-color: var(--state-recorded);
+}
+
 /* Initials modal (cookie gate) */
 .modal-backdrop {
   position: fixed;

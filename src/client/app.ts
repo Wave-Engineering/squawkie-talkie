@@ -7,6 +7,8 @@
  */
 import { ensureInitials } from "./initials.ts";
 import { startRouter } from "./router.ts";
+// Side-effect import: registers the list-detail view renderer (#8).
+import "./detail.ts";
 
 async function main(): Promise<void> {
   const initials = await ensureInitials();
