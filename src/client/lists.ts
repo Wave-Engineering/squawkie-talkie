@@ -1,0 +1,250 @@
+/**
+ * Lists screen (Story 1.6 / #7).
+ *
+ * The landing view after the initials gate. Renders every Squawk List, lets the
+ * viewer create a list (no full reload), open one (`#/list/:id`), and delete one
+ * behind a two-step *inline* confirm — never `window.confirm`/`alert`, because
+ * delete is the only irreversible multi-user action and deserves a deliberate,
+ * non-modal-native gate.
+ *
+ * A small in-memory model (`model`) backs the rows so renders stay surgical:
+ * create appends one row, delete removes one row, nothing else repaints. That
+ * same model is the seam realtime patching plugs into in #9.
+ */
+import type { List } from "../server/types.ts";
+import { createList, deleteList, getLists } from "./api.ts";
+import { navigate } from "./router.ts";
+
+// ---------------------------------------------------------------------------
+// Confirm-state reducer (pure; the oracle for a row's delete control)
+// ---------------------------------------------------------------------------
+
+/** A delete control is idle, awaiting confirmation, or mid-delete. */
+export type DeleteState = "idle" | "confirming" | "deleting";
+
+/** First click requests; then the viewer cancels or confirms. */
+export type DeleteAction = "request" | "cancel" | "confirm";
+
+/**
+ * Drive a single delete control's lifecycle. Transitions only fire from their
+ * legal source state, so stray actions (double clicks, cancel-while-idle) are
+ * no-ops rather than glitches.
+ */
+export function deleteReducer(
+  state: DeleteState,
+  action: DeleteAction,
+): DeleteState {
+  switch (action) {
+    case "request":
+      return state === "idle" ? "confirming" : state;
+    case "cancel":
+      return state === "confirming" ? "idle" : state;
+    case "confirm":
+      return state === "confirming" ? "deleting" : state;
+    default:
+      return state;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// View
+// ---------------------------------------------------------------------------
+
+/** Render the Lists screen into `container`. Called by the router on `#/`. */
+export function renderLists(container: HTMLElement): void {
+  // Surgical-render model: the source of truth for which rows exist.
+  const model: List[] = [];
+
+  const heading = document.createElement("h2");
+  heading.className = "lists__heading";
+  heading.textContent = "Squawk Lists";
+
+  const error = document.createElement("p");
+  error.className = "lists__error";
+  error.setAttribute("role", "alert");
+  error.hidden = true;
+
+  const rows = document.createElement("ul");
+  rows.className = "lists__rows";
+
+  const empty = document.createElement("p");
+  empty.className = "lists__empty";
+  empty.textContent = "No lists yet. Create the first one above.";
+  empty.hidden = true;
+
+  container.append(heading, buildNewListForm(), error, rows, empty);
+
+  function showError(message: string): void {
+    error.textContent = message;
+    error.hidden = false;
+  }
+
+  function clearError(): void {
+    error.hidden = true;
+    error.textContent = "";
+  }
+
+  function syncEmpty(): void {
+    empty.hidden = model.length > 0;
+  }
+
+  function addList(list: List): void {
+    model.push(list);
+    rows.append(buildRow(list));
+    syncEmpty();
+  }
+
+  function removeList(id: number, rowEl: HTMLElement): void {
+    const index = model.findIndex((l) => l.id === id);
+    if (index >= 0) {
+      model.splice(index, 1);
+    }
+    rowEl.remove();
+    syncEmpty();
+  }
+
+  // --- new-list form -------------------------------------------------------
+
+  function buildNewListForm(): HTMLFormElement {
+    const form = document.createElement("form");
+    form.className = "lists__new";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "lists__new-input";
+    input.placeholder = "New list name";
+    input.autocomplete = "off";
+    input.setAttribute("aria-label", "New list name");
+
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "lists__new-button";
+    button.textContent = "Create";
+    button.disabled = true;
+
+    input.addEventListener("input", () => {
+      button.disabled = input.value.trim().length === 0;
+    });
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = input.value.trim();
+      if (!name) {
+        return;
+      }
+      button.disabled = true;
+      clearError();
+      void createList(name)
+        .then((created) => {
+          addList(created);
+          input.value = "";
+        })
+        .catch(() => {
+          showError(`Could not create "${name}".`);
+        })
+        .finally(() => {
+          button.disabled = input.value.trim().length === 0;
+        });
+    });
+
+    form.append(input, button);
+    return form;
+  }
+
+  // --- a single list row ---------------------------------------------------
+
+  function buildRow(list: List): HTMLLIElement {
+    const row = document.createElement("li");
+    row.className = "list-row";
+    row.dataset.listId = String(list.id);
+
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "list-row__open";
+    open.textContent = list.name;
+    open.addEventListener("click", () => navigate(`#/list/${list.id}`));
+
+    const controls = document.createElement("div");
+    controls.className = "list-row__controls";
+
+    let state: DeleteState = "idle";
+
+    function dispatch(action: DeleteAction): void {
+      state = deleteReducer(state, action);
+      paint();
+    }
+
+    function performDelete(): void {
+      dispatch("confirm"); // -> deleting
+      void deleteList(list.id)
+        .then(() => {
+          removeList(list.id, row);
+        })
+        .catch(() => {
+          // Roll the control back so the viewer can retry or cancel.
+          state = "confirming";
+          paint();
+          showError(`Could not delete "${list.name}".`);
+        });
+    }
+
+    function paint(): void {
+      controls.replaceChildren();
+
+      if (state === "idle") {
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "list-row__delete";
+        del.textContent = "Delete";
+        del.setAttribute("aria-label", `Delete ${list.name}`);
+        del.addEventListener("click", () => dispatch("request"));
+        controls.append(del);
+        return;
+      }
+
+      if (state === "confirming") {
+        const label = document.createElement("span");
+        label.className = "list-row__confirm-label";
+        label.textContent = `Delete "${list.name}"?`;
+
+        const confirm = document.createElement("button");
+        confirm.type = "button";
+        confirm.className = "list-row__confirm";
+        confirm.textContent = "confirm";
+        confirm.addEventListener("click", performDelete);
+
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "list-row__cancel";
+        cancel.textContent = "cancel";
+        cancel.addEventListener("click", () => dispatch("cancel"));
+
+        controls.append(label, confirm, cancel);
+        return;
+      }
+
+      // deleting
+      const note = document.createElement("span");
+      note.className = "list-row__deleting mono";
+      note.textContent = "Deleting…";
+      controls.append(note);
+    }
+
+    paint();
+    row.append(open, controls);
+    return row;
+  }
+
+  // --- initial load --------------------------------------------------------
+
+  void getLists()
+    .then((lists) => {
+      for (const list of lists) {
+        addList(list);
+      }
+      syncEmpty();
+    })
+    .catch(() => {
+      showError("Could not load lists.");
+    });
+}
