@@ -4,8 +4,17 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Squawkie-Talkie</title>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <header class="app-header">
+      <div class="app-header__logo" id="logo-slot" aria-hidden="true">
+        <span class="app-header__logo-mark">&#9670;</span>
+      </div>
+      <h1 class="app-header__title">Squawkie-Talkie</h1>
+      <div class="app-header__initials" id="initials-slot" title="Your initials"></div>
+    </header>
+    <main id="view"></main>
+    <script type="module" src="/dist/app.js"></script>
   </body>
 </html>
