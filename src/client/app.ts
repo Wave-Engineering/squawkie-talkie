@@ -8,6 +8,8 @@
 import { ensureInitials } from "./initials.ts";
 import { renderLists } from "./lists.ts";
 import { registerView, startRouter } from "./router.ts";
+// Side-effect import: registers the list-detail view renderer (#8).
+import "./detail.ts";
 
 async function main(): Promise<void> {
   const initials = await ensureInitials();
@@ -17,7 +19,8 @@ async function main(): Promise<void> {
     slot.textContent = initials;
   }
 
-  // #7 wires the Lists screen; #8 will register the "detail" view.
+  // #7 wires the Lists screen; #8 self-registers the "detail" view via the
+  // side-effect import above.
   registerView("lists", renderLists);
 
   startRouter();
