@@ -1,0 +1,41 @@
+/**
+ * Squawkie-Talkie server entrypoint.
+ *
+ * Routes:
+ *   GET /healthz -> 200 { ok: true }
+ *   *           -> public/index.html (SPA shell fallback)
+ *
+ * The route logic is exported as `routeRequest` (and `fetch`) so tests can
+ * exercise it without binding a port.
+ */
+
+const INDEX_HTML_PATH = new URL("../../public/index.html", import.meta.url)
+  .pathname;
+
+export async function routeRequest(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+
+  if (req.method === "GET" && url.pathname === "/healthz") {
+    return Response.json({ ok: true });
+  }
+
+  // Fallback: serve the SPA shell.
+  const file = Bun.file(INDEX_HTML_PATH);
+  if (await file.exists()) {
+    return new Response(file, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    });
+  }
+  return new Response("Not Found", { status: 404 });
+}
+
+export const fetch = routeRequest;
+
+// Only start the listener when run directly (not when imported by tests).
+if (import.meta.main) {
+  const server = Bun.serve({
+    port: Number(process.env.PORT ?? 3000),
+    fetch: routeRequest,
+  });
+  console.log(`squawkie-talkie listening on http://localhost:${server.port}`);
+}

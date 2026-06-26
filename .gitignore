@@ -222,3 +222,10 @@ __marimo__/
 .claude/.worktrees/
 .claude/status/
 .wtf/
+
+# Bun / Node toolchain
+node_modules/
+public/dist/
+
+# SQLite database (squawk.db and its -wal/-shm sidecars)
+squawk.db*
