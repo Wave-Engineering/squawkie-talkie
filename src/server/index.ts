@@ -2,21 +2,34 @@
  * Squawkie-Talkie server entrypoint.
  *
  * Routes:
- *   GET /healthz -> 200 { ok: true }
- *   *           -> public/index.html (SPA shell fallback)
+ *   GET /healthz        -> 200 { ok: true }
+ *   GET <public asset>  -> the matching file under public/ (e.g. /styles.css,
+ *                          /dist/app.js), content-type inferred from extension
+ *   *                   -> public/index.html (SPA shell fallback)
  *
  * The route logic is exported as `routeRequest` (and `fetch`) so tests can
  * exercise it without binding a port.
  */
 
-const INDEX_HTML_PATH = new URL("../../public/index.html", import.meta.url)
-  .pathname;
+const PUBLIC_DIR = new URL("../../public/", import.meta.url).pathname;
+const INDEX_HTML_PATH = `${PUBLIC_DIR}index.html`;
 
 export async function routeRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     return Response.json({ ok: true });
+  }
+
+  // Serve static assets out of public/ (styles, built client bundle, etc.).
+  if (req.method === "GET" && url.pathname !== "/") {
+    const assetPath = resolveAsset(url.pathname);
+    if (assetPath) {
+      const asset = Bun.file(assetPath);
+      if (await asset.exists()) {
+        return new Response(asset);
+      }
+    }
   }
 
   // Fallback: serve the SPA shell.
@@ -27,6 +40,16 @@ export async function routeRequest(req: Request): Promise<Response> {
     });
   }
   return new Response("Not Found", { status: 404 });
+}
+
+/** Map a URL path to an absolute file under public/, or null if it escapes. */
+function resolveAsset(pathname: string): string | null {
+  const clean = decodeURIComponent(pathname).replace(/^\/+/, "");
+  if (!clean || clean.includes("..") || clean.includes("\0")) {
+    return null;
+  }
+  const resolved = new URL(clean, `file://${PUBLIC_DIR}`).pathname;
+  return resolved.startsWith(PUBLIC_DIR) ? resolved : null;
 }
 
 export const fetch = routeRequest;
