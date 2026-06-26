@@ -7,6 +7,7 @@
  */
 import { ensureInitials } from "./initials.ts";
 import { renderLists } from "./lists.ts";
+import { connect } from "./realtime.ts";
 import { registerView, startRouter } from "./router.ts";
 // Side-effect import: registers the list-detail view renderer (#8).
 import "./detail.ts";
@@ -23,7 +24,10 @@ async function main(): Promise<void> {
   // side-effect import above.
   registerView("lists", renderLists);
 
+  // Mount the current view first so it registers its realtime sink, then open
+  // the SSE stream (#9): changes by other viewers now arrive live.
   startRouter();
+  connect();
 }
 
 void main();
