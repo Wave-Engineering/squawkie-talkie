@@ -1,0 +1,199 @@
+/*
+ * Squawkie-Talkie design tokens + base shell styling.
+ *
+ * Restrained cyberpunk: near-black surfaces, a single cyan accent, and
+ * edge-glow state colors. Later visual work (lists / detail) extends these
+ * tokens rather than introducing new ones.
+ */
+
+:root {
+  /* Surfaces */
+  --bg: #0a0b0f; /* near-black */
+  --surface: #12141c;
+  --text: #e6edf3;
+
+  /* Accent (single) */
+  --accent: #00e5ff; /* cyan */
+
+  /* State colors */
+  --state-open: #00e5ff;
+  --state-retired: #6b7280; /* muted */
+  --state-recorded: #c026d3; /* magenta / violet */
+
+  /* Spacing scale (generous row gaps) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --row-gap: var(--space-5);
+
+  /* Typography: monospace for numbers/initials, clean sans for body */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Menlo, Consolas,
+    monospace;
+
+  --radius: 8px;
+  --glow: 0 0 0 2px rgba(0, 229, 255, 0.35), 0 0 12px rgba(0, 229, 255, 0.45);
+}
+
+/* Base reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Header */
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--surface);
+  border-bottom: 1px solid rgba(230, 237, 243, 0.08);
+}
+
+.app-header__logo {
+  display: flex;
+  align-items: center;
+}
+
+.app-header__logo-mark {
+  color: var(--accent);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.app-header__title {
+  flex: 1;
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.app-header__initials {
+  min-width: 2.5rem;
+  padding: var(--space-1) var(--space-3);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  text-align: center;
+  color: var(--accent);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  border-radius: var(--radius);
+}
+
+/* Monospace helper for numbers/identifiers */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* View container — generous whitespace, single column */
+#view {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--row-gap);
+}
+
+/* State color helpers (extended by later visual work) */
+.state-open {
+  color: var(--state-open);
+}
+.state-retired {
+  color: var(--state-retired);
+}
+.state-recorded {
+  color: var(--state-recorded);
+}
+
+/* Focus-visible edge glow */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--glow);
+  border-radius: var(--radius);
+}
+
+/* Initials modal (cookie gate) */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(5, 6, 10, 0.72);
+}
+
+.modal {
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  border-radius: var(--radius);
+  box-shadow: 0 0 24px rgba(0, 229, 255, 0.12);
+}
+
+.modal__title {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.modal__hint {
+  margin: 0;
+  font-size: 0.875rem;
+  color: rgba(230, 237, 243, 0.6);
+}
+
+.modal__input {
+  padding: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 1.5rem;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.3em;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid rgba(230, 237, 243, 0.15);
+  border-radius: var(--radius);
+}
+
+.modal__button {
+  padding: var(--space-3) var(--space-4);
+  font: inherit;
+  font-weight: 600;
+  color: #04212a;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.modal__button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
