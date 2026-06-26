@@ -1,12 +1,22 @@
 /**
- * Client entrypoint placeholder.
+ * Client bootstrap.
  *
- * The full client shell arrives in #6; this stub exists so `bun run build`
- * (which bundles src/client/app.ts) has an entrypoint from the scaffold on.
+ * 1. Resolve the viewer's initials (cookie gate; prompts on first visit).
+ * 2. Paint the initials into the header slot.
+ * 3. Start the hash router (lists / list-detail).
  */
-const app = document.getElementById("app");
-if (app) {
-  app.textContent = "Squawkie-Talkie";
+import { ensureInitials } from "./initials.ts";
+import { startRouter } from "./router.ts";
+
+async function main(): Promise<void> {
+  const initials = await ensureInitials();
+
+  const slot = document.getElementById("initials-slot");
+  if (slot) {
+    slot.textContent = initials;
+  }
+
+  startRouter();
 }
 
-export {};
+void main();
