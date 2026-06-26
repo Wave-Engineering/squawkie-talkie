@@ -1,0 +1,16 @@
+{
+  "name": "squawkie-talkie",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "bun run src/server/index.ts",
+    "build": "bun build src/client/app.ts --outdir public/dist",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "bun-types": "latest",
+    "typescript": "^5"
+  }
+}
