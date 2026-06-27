@@ -50,6 +50,13 @@ function stubFetch(): void {
     })) as unknown as typeof fetch;
 }
 
+/** Dispatch a keydown for `key` on `el`. */
+function press(el: HTMLElement, key: string): void {
+  el.dispatchEvent(
+    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+  );
+}
+
 beforeEach(() => {
   document.body.replaceChildren();
   document.cookie = "st_initials=QA"; // skip the initials prompt
@@ -148,4 +155,65 @@ test("a remote text update does NOT clobber the focused input, but updates other
     '[data-squawk-id="11"] input',
   )!;
   expect(input11.value).toBe("remote text");
+});
+
+// --- Phase 2: keyboard interactions -----------------------------------------
+
+test("Up/Down arrows navigate between the new box and squawk rows", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  const input10 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="10"] input',
+  )!;
+  const input11 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="11"] input',
+  )!;
+
+  newInput.focus();
+  press(newInput, "ArrowDown"); // into the stack (newest)
+  expect(document.activeElement).toBe(input10);
+  press(input10, "ArrowDown"); // older
+  expect(document.activeElement).toBe(input11);
+  press(input11, "ArrowDown"); // at the bottom — no-op
+  expect(document.activeElement).toBe(input11);
+  press(input11, "ArrowUp"); // back up
+  expect(document.activeElement).toBe(input10);
+  press(input10, "ArrowUp"); // back to the new box (top)
+  expect(document.activeElement).toBe(newInput);
+});
+
+test("Escape on an existing row reverts to the last-saved text", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const input10 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="10"] input',
+  )!;
+  input10.focus();
+  input10.value = "half-typed change I want to abandon";
+  press(input10, "Escape");
+  expect(input10.value).toBe("squawk 2"); // restored to last-saved
+});
+
+test("Escape on the new-squawk box clears it", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  newInput.focus();
+  newInput.value = "abandon me";
+  press(newInput, "Escape");
+  expect(newInput.value).toBe("");
 });

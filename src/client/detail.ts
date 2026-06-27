@@ -199,6 +199,19 @@ export async function renderList(
   }
 
   newRow.input.addEventListener("keydown", (event) => {
+    // Escape on the new-squawk box abandons the half-typed entry.
+    if (event.key === "Escape") {
+      event.preventDefault();
+      newRow.input.value = "";
+      return;
+    }
+    // ArrowDown drops focus into the stack (the newest existing squawk). The new
+    // box is pinned at the top, so ArrowUp has nowhere to go.
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusAdjacentRow(newRow.el, "down");
+      return;
+    }
     const decision = onEnter({
       key: event.key,
       isNewRow: true,
@@ -321,6 +334,23 @@ function buildSquawkRow(
   input.addEventListener("input", () => save());
   input.addEventListener("blur", () => save.flush());
   input.addEventListener("keydown", (event) => {
+    // Escape: abort the in-progress edit, restoring the last-saved text. Any
+    // pending autosave is dropped so it can't re-apply the abandoned value.
+    // (A value already autosaved after 10s is the "last saved" state — by design
+    // Escape only rewinds to there, not to the pre-edit original.)
+    if (event.key === "Escape") {
+      event.preventDefault();
+      save.cancel();
+      input.value = lastSaved;
+      return;
+    }
+    // Up/Down move between rows (the input is single-line, so the arrows are
+    // free for navigation rather than caret movement).
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      focusAdjacentRow(row, event.key === "ArrowUp" ? "up" : "down");
+      return;
+    }
     const decision = onEnter({
       key: event.key,
       isNewRow: false,
@@ -387,6 +417,24 @@ function focusNewSquawkInput(fromRow: HTMLElement): void {
     ".squawk-row--new .squawk-row__text",
   );
   input?.focus();
+}
+
+/**
+ * Move focus to the text input of the row directly above (`up`) or below
+ * (`down`) `row` in the stack. The stack is `[new-row, newest, …, oldest]`, so
+ * `up` walks toward newer squawks (and the new-squawk box at the top) and `down`
+ * toward older ones. A no-op at the ends. Cursor lands at end of the text.
+ */
+function focusAdjacentRow(row: HTMLElement, direction: "up" | "down"): void {
+  const sibling =
+    direction === "up" ? row.previousElementSibling : row.nextElementSibling;
+  const input = sibling?.querySelector<HTMLInputElement>(".squawk-row__text");
+  if (!input) {
+    return;
+  }
+  input.focus();
+  const end = input.value.length;
+  input.setSelectionRange?.(end, end);
 }
 
 /** Fallback render when the list cannot be loaded. */
