@@ -217,3 +217,36 @@ test("Escape on the new-squawk box clears it", async () => {
   press(newInput, "Escape");
   expect(newInput.value).toBe("");
 });
+
+// --- Phase 2: hover recorder badge ------------------------------------------
+
+test("each squawk row carries a recorder badge with the recorder's initials", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const badge = container.querySelector<HTMLElement>(
+    '[data-squawk-id="10"] .squawk-row__recorder',
+  )!;
+  expect(badge.textContent).toBe("BJ");
+  expect(badge.getAttribute("aria-label")).toBe("recorded by BJ");
+});
+
+test("a remote update refreshes the recorder initials", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  applyEvent(
+    { type: "squawk.updated", squawk: { ...mkSquawk(10, 2), initials: "ZZ" } },
+    { view: activeView(), activeElement: null },
+  );
+
+  const badge = container.querySelector<HTMLElement>(
+    '[data-squawk-id="10"] .squawk-row__recorder',
+  )!;
+  expect(badge.textContent).toBe("ZZ");
+});

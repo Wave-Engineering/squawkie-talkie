@@ -150,6 +150,7 @@ body {
 
 /* A squawk row: [seq] [text input] [state select]. Newest on top. */
 .squawk-row {
+  position: relative;
   display: grid;
   grid-template-columns: 2.5rem 1fr auto;
   align-items: center;
@@ -202,6 +203,33 @@ body {
 }
 .squawk-row.state-recorded {
   border-left-color: var(--state-recorded);
+}
+
+/* Hover popover: the initials of whoever last recorded/edited the squawk.
+   Hidden until the row is hovered or focused; a small floating tag at the
+   top-right so it never reflows the row. */
+.squawk-row__recorder {
+  position: absolute;
+  top: calc(-1 * var(--space-2));
+  right: var(--space-3);
+  padding: 0.05rem 0.4rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--bg);
+  background: var(--accent);
+  border-radius: var(--radius);
+  opacity: 0;
+  transform: translateY(3px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  pointer-events: none;
+}
+
+.squawk-row:hover .squawk-row__recorder,
+.squawk-row:focus-within .squawk-row__recorder {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* Initials modal (cookie gate) */

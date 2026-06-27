@@ -193,6 +193,7 @@ export async function renderList(
     }
     model.set(squawk.id, squawk);
     handle.setState(squawk.state);
+    handle.setRecorder(squawk.initials);
     if (applyToInput) {
       handle.setText(squawk.text);
     }
@@ -285,6 +286,8 @@ interface RowHandle {
   el: HTMLElement;
   setText(text: string): void;
   setState(state: SquawkState): void;
+  /** Update the recorder initials shown in the row's hover popover. */
+  setRecorder(initials: string): void;
 }
 
 /**
@@ -382,7 +385,13 @@ function buildSquawkRow(
       .catch((err) => console.error("state update failed", err));
   });
 
-  row.append(seq, input, select);
+  // Hover popover: who last recorded/edited this squawk. Hidden until the row is
+  // hovered or focused (see .squawk-row__recorder in styles.css).
+  const recorder = document.createElement("span");
+  recorder.className = "squawk-row__recorder mono";
+  setRecorderText(recorder, squawk.initials);
+
+  row.append(seq, input, select, recorder);
 
   return {
     el: row,
@@ -402,7 +411,14 @@ function buildSquawkRow(
         select.value = state;
       }
     },
+    setRecorder: (initials: string): void => setRecorderText(recorder, initials),
   };
+}
+
+/** Render the recorder badge text + its accessible label for `initials`. */
+function setRecorderText(el: HTMLElement, initials: string): void {
+  el.textContent = initials;
+  el.setAttribute("aria-label", `recorded by ${initials}`);
 }
 
 /** Swap the row's state color class to `state` (surgical, no rebuild). */
