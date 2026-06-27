@@ -14,7 +14,7 @@
  */
 
 import { handleApi } from "./api.ts";
-import { subscribe } from "./sse.ts";
+import { shutdown, subscribe } from "./sse.ts";
 
 const PUBLIC_DIR = new URL("../../public/", import.meta.url).pathname;
 const INDEX_HTML_PATH = `${PUBLIC_DIR}index.html`;
@@ -78,4 +78,13 @@ if (import.meta.main) {
     fetch: routeRequest,
   });
   console.log(`squawkie-talkie listening on http://localhost:${server.port}`);
+
+  // Graceful shutdown: close SSE streams + heartbeat, then stop the listener.
+  const stop = (): void => {
+    shutdown();
+    void server.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
 }

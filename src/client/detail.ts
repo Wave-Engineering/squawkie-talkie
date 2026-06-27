@@ -17,13 +17,16 @@
  * is never rebuilt on update. This is the seam #9 relies on to patch rows from
  * realtime events without disturbing whoever is typing.
  *
- * NOTE: the `getList` / `createSquawk` / `updateSquawk` fetch helpers below are
- * intentionally local. The shared `src/client/api.ts` wrappers land with #7 in
- * the same wave; depending on that not-yet-merged module would couple the two
- * parallel flights. A Phase-2 cleanup should fold these into the shared module.
+ * Data access uses the shared `src/client/api.ts` fetch wrappers.
  */
 
-import type { List, Squawk, SquawkState } from "../server/types.ts";
+import type { Squawk, SquawkState } from "../server/types.ts";
+import {
+  createSquawk,
+  getList,
+  updateSquawk,
+  type ListDetail,
+} from "./api.ts";
 import { ensureInitials } from "./initials.ts";
 import { setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
@@ -118,55 +121,6 @@ export function onEnter(input: EnterInput): EnterDecision {
       : { action: "ignore", focusNewBox: false };
   }
   return { action: "commit", focusNewBox: true };
-}
-
-// ---------------------------------------------------------------------------
-// Data access (local fetch helpers — see module note above)
-// ---------------------------------------------------------------------------
-
-/** A list plus its squawks (newest first), as returned by `GET /api/lists/:id`. */
-interface ListDetail extends List {
-  squawks: Squawk[];
-}
-
-async function getList(id: number): Promise<ListDetail> {
-  const res = await fetch(`/api/lists/${id}`);
-  if (!res.ok) {
-    throw new Error(`getList ${id}: ${res.status}`);
-  }
-  return (await res.json()) as ListDetail;
-}
-
-async function createSquawk(
-  listId: number,
-  text: string,
-  initials: string,
-): Promise<Squawk> {
-  const res = await fetch(`/api/lists/${listId}/squawks`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text, initials }),
-  });
-  if (!res.ok) {
-    throw new Error(`createSquawk: ${res.status}`);
-  }
-  return (await res.json()) as Squawk;
-}
-
-async function updateSquawk(
-  id: number,
-  patch: { text?: string; state?: SquawkState },
-  initials: string,
-): Promise<Squawk> {
-  const res = await fetch(`/api/squawks/${id}`, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...patch, initials }),
-  });
-  if (!res.ok) {
-    throw new Error(`updateSquawk ${id}: ${res.status}`);
-  }
-  return (await res.json()) as Squawk;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +364,13 @@ function buildSquawkRow(
     },
     setState: (state: SquawkState): void => {
       applyState(row, state);
-      select.value = state;
+      // Don't yank the dropdown selection out from under a viewer who currently
+      // has it focused/open; the row's model already carries the remote state,
+      // and their own next change is the last write (mirrors the focused-input
+      // rule in realtime.ts). Recoloring the row is harmless, so it still runs.
+      if (document.activeElement !== select) {
+        select.value = state;
+      }
     },
   };
 }
