@@ -77,9 +77,9 @@ body {
 }
 
 .app-header__logo-mark {
+  display: block;
   color: var(--accent);
-  font-size: 1.25rem;
-  line-height: 1;
+  filter: drop-shadow(0 0 4px rgba(0, 229, 255, 0.45));
 }
 
 .app-header__title {
@@ -135,11 +135,41 @@ body {
 }
 
 /* List-detail view — squawk stack editor (#8) */
+.detail__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
 .detail__title {
   margin: 0;
   font-size: 1.25rem;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+/* (O│R│E) counts — open │ retired │ recorded, each tinted by state. */
+.detail__counts {
+  font-size: 0.95rem;
+  color: rgba(230, 237, 243, 0.45);
+}
+
+.detail__counts .count {
+  font-weight: 700;
+  padding: 0 0.35rem;
+}
+.detail__counts .count--open {
+  color: var(--state-open);
+}
+.detail__counts .count--retired {
+  color: var(--state-retired);
+}
+.detail__counts .count--recorded {
+  color: var(--state-recorded);
+}
+.detail__counts .count__sep {
+  color: rgba(230, 237, 243, 0.25);
 }
 
 .detail__stack {
