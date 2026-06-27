@@ -29,7 +29,7 @@ import {
   updateSquawk,
 } from "./db.ts";
 import { broadcast } from "./sse.ts";
-import type { SquawkState } from "./types.ts";
+import type { List, SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
 const SQUAWK_STATES: ReadonlySet<string> = new Set<SquawkState>([
@@ -37,6 +37,15 @@ const SQUAWK_STATES: ReadonlySet<string> = new Set<SquawkState>([
   "retired",
   "recorded",
 ]);
+
+/** A list as exposed over the API — without the internal `next_seq` counter. */
+export type PublicList = Omit<List, "next_seq">;
+
+/** Drop the internal `next_seq` counter so it never leaks to clients. */
+function publicList(list: List): PublicList {
+  const { next_seq: _next_seq, ...rest } = list;
+  return rest;
+}
 
 /** Centralized JSON response helper. */
 export function json(data: unknown, status = 200): Response {
@@ -95,7 +104,7 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
   // /api/lists
   if (segments.length === 2 && segments[1] === "lists") {
     if (method === "GET") {
-      return json(listLists());
+      return json(listLists().map(publicList));
     }
     if (method === "POST") {
       return createListRoute(req);
@@ -114,7 +123,7 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
       if (!list) {
         return json({ error: "list not found" }, 404);
       }
-      return json({ ...list, squawks: listSquawks(id) });
+      return json({ ...publicList(list), squawks: listSquawks(id) });
     }
     if (method === "DELETE") {
       if (deleteList(id)) {
@@ -168,7 +177,7 @@ async function createListRoute(req: Request): Promise<Response> {
   if (!name) {
     return json({ error: "name is required" }, 400);
   }
-  const list = createList(name);
+  const list = publicList(createList(name));
   broadcast({ type: "list.created", list });
   return json(list, 201);
 }
@@ -222,6 +231,12 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
       return json({ error: "invalid state" }, 400);
     }
     patch.state = body.state as SquawkState;
+  }
+
+  // Require at least one editable field; an empty patch must not silently bump
+  // updated_at (or "record" a change that didn't happen).
+  if (patch.text === undefined && patch.state === undefined) {
+    return json({ error: "no updatable fields: provide text or state" }, 400);
   }
 
   let initials: string | undefined;

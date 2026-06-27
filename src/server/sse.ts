@@ -92,3 +92,20 @@ const heartbeat = setInterval(() => {
 // In Bun, timers expose unref(); don't let the heartbeat alone hold the process
 // (or a test runner) open.
 (heartbeat as unknown as { unref?: () => void }).unref?.();
+
+/**
+ * Graceful teardown: stop the heartbeat and close every open stream. Wire this
+ * into the server's shutdown signal so connections and the interval don't dangle
+ * (the `unref()` above keeps them from blocking exit, but this closes cleanly).
+ */
+export function shutdown(): void {
+  clearInterval(heartbeat);
+  for (const controller of [...subscribers]) {
+    try {
+      controller.close();
+    } catch {
+      // Already closed/errored — nothing to do.
+    }
+    subscribers.delete(controller);
+  }
+}

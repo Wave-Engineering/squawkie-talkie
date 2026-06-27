@@ -68,6 +68,21 @@ test("GET list includes its squawks; DELETE removes it", async () => {
   );
 });
 
+test("list responses do not expose the internal next_seq counter", async () => {
+  const created = await createList("Hygiene");
+  expect("next_seq" in created).toBe(false);
+
+  const list = (await (await routeRequest(req("GET", "/api/lists"))).json()).find(
+    (l: { id: number }) => l.id === created.id,
+  );
+  expect("next_seq" in list).toBe(false);
+
+  const detail = await (
+    await routeRequest(req("GET", `/api/lists/${created.id}`))
+  ).json();
+  expect("next_seq" in detail).toBe(false);
+});
+
 // --- squawks -----------------------------------------------------------------
 
 test("POST squawk returns 201 + body", async () => {
@@ -118,6 +133,33 @@ test("PATCH squawk updates state", async () => {
   const updated = await res.json();
   expect(updated.state).toBe("retired");
   expect(updated.initials).toBe("ZZ");
+});
+
+test("PATCH with no text or state is rejected (no silent updated_at bump)", async () => {
+  const list = await createList("NoOp");
+  const sq = await (
+    await routeRequest(
+      req("POST", `/api/lists/${list.id}/squawks`, { text: "x", initials: "AA" }),
+    )
+  ).json();
+
+  // Empty body, and a body carrying only initials, are both no-ops -> 400.
+  expect(
+    (await routeRequest(req("PATCH", `/api/squawks/${sq.id}`, {}))).status,
+  ).toBe(400);
+  expect(
+    (
+      await routeRequest(
+        req("PATCH", `/api/squawks/${sq.id}`, { initials: "ZZ" }),
+      )
+    ).status,
+  ).toBe(400);
+
+  // The squawk is untouched.
+  const after = await (
+    await routeRequest(req("GET", `/api/lists/${list.id}`))
+  ).json();
+  expect(after.squawks[0].updated_at).toBe(sq.updated_at);
 });
 
 // --- validation --------------------------------------------------------------

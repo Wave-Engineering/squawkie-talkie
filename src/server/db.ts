@@ -13,31 +13,45 @@
 import { Database } from "bun:sqlite";
 import type { List, Squawk, SquawkState } from "./types.ts";
 
-/** Single shared connection. `:memory:` gives each test file its own DB. */
-export const db = new Database(process.env.SQUAWK_DB ?? "squawk.db");
+/**
+ * Lazily-opened shared connection. The DB is NOT opened at import time: the
+ * path (`SQUAWK_DB`, default `squawk.db`) is resolved on first use, so merely
+ * importing this module (e.g. a healthz test importing the server) never
+ * creates a database file, and a test can set `SQUAWK_DB=:memory:` any time
+ * before the first query.
+ */
+let connection: Database | null = null;
 
-// Foreign keys are per-connection in SQLite; required for ON DELETE CASCADE.
-db.exec("PRAGMA foreign_keys = ON");
+/** Open the connection (once), applying pragmas + schema, and return it. */
+export function getDb(): Database {
+  if (connection) {
+    return connection;
+  }
+  const db = new Database(process.env.SQUAWK_DB ?? "squawk.db");
+  // Foreign keys are per-connection in SQLite; required for ON DELETE CASCADE.
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      next_seq INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS lists (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    next_seq INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS squawks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-    seq INTEGER NOT NULL,
-    text TEXT NOT NULL DEFAULT '',
-    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','retired','recorded')),
-    initials TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-`);
+    CREATE TABLE IF NOT EXISTS squawks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','retired','recorded')),
+      initials TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+  connection = db;
+  return connection;
+}
 
 /** Current timestamp as an ISO-8601 string. */
 function now(): string {
@@ -50,7 +64,7 @@ function now(): string {
 
 /** Create a list and return the persisted row. */
 export function createList(name: string): List {
-  return db
+  return getDb()
     .query(
       "INSERT INTO lists (name, next_seq, created_at) VALUES (?, 1, ?) RETURNING *",
     )
@@ -59,12 +73,15 @@ export function createList(name: string): List {
 
 /** Return all lists, oldest first. */
 export function listLists(): List[] {
-  return db.query("SELECT * FROM lists ORDER BY id ASC").all() as List[];
+  return getDb().query("SELECT * FROM lists ORDER BY id ASC").all() as List[];
 }
 
 /** Return one list by id, or null if it does not exist. */
 export function getList(id: number): List | null {
-  return (db.query("SELECT * FROM lists WHERE id = ?").get(id) as List | null) ?? null;
+  return (
+    (getDb().query("SELECT * FROM lists WHERE id = ?").get(id) as List | null) ??
+    null
+  );
 }
 
 /**
@@ -72,7 +89,7 @@ export function getList(id: number): List | null {
  * Returns true if a list row was removed.
  */
 export function deleteList(id: number): boolean {
-  return db.query("DELETE FROM lists WHERE id = ?").run(id).changes > 0;
+  return getDb().query("DELETE FROM lists WHERE id = ?").run(id).changes > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,33 +103,44 @@ export function deleteList(id: number): boolean {
  * atomic. `next_seq` is advanced on allocation and never rolled back, so a
  * seq is never reused even if its squawk is later deleted.
  */
-const createSquawkTx = db.transaction(
-  (listId: number, text: string, initials: string): Squawk => {
-    const seqRow = db
-      .query(
-        "UPDATE lists SET next_seq = next_seq + 1 WHERE id = ? RETURNING next_seq - 1 AS seq",
-      )
-      .get(listId) as { seq: number } | null;
-    if (!seqRow) {
-      throw new Error(`createSquawk: list ${listId} not found`);
-    }
+type SquawkTx = (listId: number, text: string, initials: string) => Squawk;
+let squawkTx: SquawkTx | null = null;
 
-    const ts = now();
-    return db
-      .query(
-        `INSERT INTO squawks (list_id, seq, text, state, initials, created_at, updated_at)
-         VALUES (?, ?, ?, 'open', ?, ?, ?) RETURNING *`,
-      )
-      .get(listId, seqRow.seq, text, initials, ts, ts) as Squawk;
-  },
-);
+/** Build (once) the prepared transaction bound to the open connection. */
+function getSquawkTx(): SquawkTx {
+  if (squawkTx) {
+    return squawkTx;
+  }
+  const db = getDb();
+  squawkTx = db.transaction(
+    (listId: number, text: string, initials: string): Squawk => {
+      const seqRow = db
+        .query(
+          "UPDATE lists SET next_seq = next_seq + 1 WHERE id = ? RETURNING next_seq - 1 AS seq",
+        )
+        .get(listId) as { seq: number } | null;
+      if (!seqRow) {
+        throw new Error(`createSquawk: list ${listId} not found`);
+      }
+
+      const ts = now();
+      return db
+        .query(
+          `INSERT INTO squawks (list_id, seq, text, state, initials, created_at, updated_at)
+           VALUES (?, ?, ?, 'open', ?, ?, ?) RETURNING *`,
+        )
+        .get(listId, seqRow.seq, text, initials, ts, ts) as Squawk;
+    },
+  );
+  return squawkTx;
+}
 
 export function createSquawk(
   listId: number,
   text: string,
   initials: string,
 ): Squawk {
-  return createSquawkTx(listId, text, initials);
+  return getSquawkTx()(listId, text, initials);
 }
 
 /**
@@ -145,7 +173,7 @@ export function updateSquawk(
   params.push(now());
   params.push(id);
 
-  const row = db
+  const row = getDb()
     .query(`UPDATE squawks SET ${sets.join(", ")} WHERE id = ? RETURNING *`)
     .get(...params) as Squawk | null;
   if (!row) {
@@ -156,7 +184,7 @@ export function updateSquawk(
 
 /** Return a list's squawks, newest first (`seq DESC`). */
 export function listSquawks(listId: number): Squawk[] {
-  return db
+  return getDb()
     .query("SELECT * FROM squawks WHERE list_id = ? ORDER BY seq DESC")
     .all(listId) as Squawk[];
 }

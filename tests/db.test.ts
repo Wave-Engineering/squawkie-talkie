@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 // test file gets its own throwaway connection and never touches squawk.db.
 process.env.SQUAWK_DB = ":memory:";
 const {
-  db,
+  getDb,
   createList,
   listLists,
   getList,
@@ -34,7 +34,7 @@ test("seq is monotonic and never reused", () => {
   expect(s2.seq).toBe(2);
 
   // Delete the most recent squawk directly; seq allocation must not roll back.
-  db.query("DELETE FROM squawks WHERE id = ?").run(s2.id);
+  getDb().query("DELETE FROM squawks WHERE id = ?").run(s2.id);
 
   const s3 = createSquawk(list.id, "third", "CC");
   expect(s3.seq).toBe(3); // not 2 — seq keeps climbing
