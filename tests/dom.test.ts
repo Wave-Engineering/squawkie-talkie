@@ -250,3 +250,34 @@ test("a remote update refreshes the recorder initials", async () => {
   )!;
   expect(badge.textContent).toBe("ZZ");
 });
+
+// --- Phase 2: (O│R│E) counts ------------------------------------------------
+
+test("the (O│R│E) counts render and update live on a state change", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const counts = container.querySelector<HTMLElement>(".detail__counts")!;
+  const cell = (s: string) =>
+    counts.querySelector<HTMLElement>(`.count--${s}`)!.textContent;
+
+  // both seeded squawks start open
+  expect([cell("open"), cell("retired"), cell("recorded")]).toEqual([
+    "2",
+    "0",
+    "0",
+  ]);
+
+  applyEvent(
+    { type: "squawk.updated", squawk: mkSquawk(10, 2, "recorded") },
+    { view: activeView(), activeElement: null },
+  );
+  expect([cell("open"), cell("retired"), cell("recorded")]).toEqual([
+    "1",
+    "0",
+    "1",
+  ]);
+});

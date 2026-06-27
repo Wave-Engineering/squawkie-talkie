@@ -46,6 +46,22 @@ export function stateClass(state: SquawkState): string {
   return `state-${state}`;
 }
 
+/** Per-state tallies for the `(O│R│E)` counts badge. */
+export interface StateCounts {
+  open: number;
+  retired: number;
+  recorded: number;
+}
+
+/** Count squawks by state. */
+export function countByState(squawks: Iterable<Squawk>): StateCounts {
+  const counts: StateCounts = { open: 0, retired: 0, recorded: 0 };
+  for (const s of squawks) {
+    counts[s.state] += 1;
+  }
+  return counts;
+}
+
 /** A debounced function with imperative `flush`/`cancel` controls. */
 export interface Debounced {
   (): void;
@@ -149,10 +165,6 @@ export async function renderList(
 
   container.replaceChildren();
 
-  const title = document.createElement("h2");
-  title.className = "detail__title";
-  title.textContent = detail.name;
-
   const stack = document.createElement("div");
   stack.className = "detail__stack";
 
@@ -160,6 +172,19 @@ export async function renderList(
   const model = new Map<number, Squawk>();
   // The built rows, keyed by squawk id — the seam realtime (#9) patches.
   const rowHandles = new Map<number, RowHandle>();
+
+  // Header: list name + the (O│R│E) open/retired/recorded counts, recomputed
+  // from the model whenever a squawk is added or changes state.
+  const header = document.createElement("div");
+  header.className = "detail__header";
+  const title = document.createElement("h2");
+  title.className = "detail__title";
+  title.textContent = detail.name;
+  const counts = document.createElement("span");
+  counts.className = "detail__counts mono";
+  header.append(title, counts);
+  const updateCounts = (): void =>
+    renderCounts(counts, countByState(model.values()));
 
   // Row 0: the always-empty new-squawk input.
   const newRow = buildNewRow();
@@ -175,9 +200,10 @@ export async function renderList(
       return;
     }
     model.set(squawk.id, squawk);
-    const handle = buildSquawkRow(squawk, id, initials, model);
+    const handle = buildSquawkRow(squawk, id, initials, model, updateCounts);
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
+    updateCounts();
   }
 
   /**
@@ -197,6 +223,7 @@ export async function renderList(
     if (applyToInput) {
       handle.setText(squawk.text);
     }
+    updateCounts();
   }
 
   newRow.input.addEventListener("keydown", (event) => {
@@ -235,12 +262,13 @@ export async function renderList(
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
     model.set(squawk.id, squawk);
-    const handle = buildSquawkRow(squawk, id, initials, model);
+    const handle = buildSquawkRow(squawk, id, initials, model, updateCounts);
     rowHandles.set(squawk.id, handle);
     stack.append(handle.el);
   }
+  updateCounts();
 
-  container.append(title, stack);
+  container.append(header, stack);
   newRow.input.focus();
 
   // Realtime seam (#9): this mount is the active sink while the list is shown.
@@ -300,6 +328,7 @@ function buildSquawkRow(
   listId: number,
   initials: string,
   model: Map<number, Squawk>,
+  onChange: () => void,
 ): RowHandle {
   const row = document.createElement("div");
   row.className = `squawk-row ${stateClass(squawk.state)}`;
@@ -380,8 +409,18 @@ function buildSquawkRow(
   select.addEventListener("change", () => {
     const state = select.value as SquawkState;
     applyState(row, state); // immediate visual feedback
+    // Optimistically reflect the new state in the model so the (O│R│E) counts
+    // update instantly; the PATCH response re-affirms it.
+    const current = model.get(squawk.id);
+    if (current) {
+      model.set(squawk.id, { ...current, state });
+    }
+    onChange();
     updateSquawk(squawk.id, { state }, initials)
-      .then((updated) => model.set(updated.id, updated))
+      .then((updated) => {
+        model.set(updated.id, updated);
+        onChange();
+      })
       .catch((err) => console.error("state update failed", err));
   });
 
@@ -419,6 +458,36 @@ function buildSquawkRow(
 function setRecorderText(el: HTMLElement, initials: string): void {
   el.textContent = initials;
   el.setAttribute("aria-label", `recorded by ${initials}`);
+}
+
+/** Render the `(O│R│E)` counts badge — open │ retired │ recorded, each tinted. */
+function renderCounts(el: HTMLElement, counts: StateCounts): void {
+  el.replaceChildren();
+  el.append(
+    document.createTextNode("("),
+    countSpan(counts.open, "open"),
+    countSep(),
+    countSpan(counts.retired, "retired"),
+    countSep(),
+    countSpan(counts.recorded, "recorded"),
+    document.createTextNode(")"),
+  );
+}
+
+function countSpan(n: number, state: SquawkState): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.className = `count count--${state}`;
+  span.textContent = String(n);
+  span.title = `${state}: ${n}`;
+  return span;
+}
+
+function countSep(): HTMLSpanElement {
+  const sep = document.createElement("span");
+  sep.className = "count__sep";
+  sep.textContent = "│";
+  sep.setAttribute("aria-hidden", "true");
+  return sep;
 }
 
 /** Swap the row's state color class to `state` (surgical, no rebuild). */

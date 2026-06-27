@@ -1,5 +1,11 @@
 import { expect, test } from "bun:test";
-import { debounce, onEnter, stateClass } from "../src/client/detail.ts";
+import type { Squawk } from "../src/server/types.ts";
+import {
+  countByState,
+  debounce,
+  onEnter,
+  stateClass,
+} from "../src/client/detail.ts";
 
 // --- stateClass --------------------------------------------------------------
 
@@ -7,6 +13,30 @@ test("stateClass maps state -> css class", () => {
   expect(stateClass("open")).toBe("state-open");
   expect(stateClass("retired")).toBe("state-retired");
   expect(stateClass("recorded")).toBe("state-recorded");
+});
+
+// --- countByState ------------------------------------------------------------
+
+test("countByState tallies open / retired / recorded", () => {
+  const sq = (id: number, state: Squawk["state"]): Squawk => ({
+    id,
+    list_id: 1,
+    seq: id,
+    text: "",
+    state,
+    initials: "BJ",
+    created_at: "t",
+    updated_at: "t",
+  });
+  expect(countByState([])).toEqual({ open: 0, retired: 0, recorded: 0 });
+  expect(
+    countByState([
+      sq(1, "open"),
+      sq(2, "open"),
+      sq(3, "retired"),
+      sq(4, "recorded"),
+    ]),
+  ).toEqual({ open: 2, retired: 1, recorded: 1 });
 });
 
 // --- debounce ----------------------------------------------------------------
