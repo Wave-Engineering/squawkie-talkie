@@ -281,3 +281,56 @@ test("the (O│R│E) counts render and update live on a state change", async ()
     "1",
   ]);
 });
+
+// --- Phase 2: export list -> JSON -------------------------------------------
+
+test("each list row has an Export button that downloads the list as JSON", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+
+  const fetched: string[] = [];
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    const url = String(input);
+    fetched.push(url);
+    const body = url.endsWith("/api/lists")
+      ? JSON.stringify([{ id: 7, name: "Sprint 7", created_at: "t" }])
+      : JSON.stringify({ id: 7, name: "Sprint 7", created_at: "t", squawks: [] });
+    return Promise.resolve(
+      new Response(body, { headers: { "content-type": "application/json" } }),
+    );
+  }) as typeof fetch;
+
+  // Stub the browser download plumbing so the test is deterministic.
+  const urlApi = URL as unknown as {
+    createObjectURL: (b: Blob) => string;
+    revokeObjectURL: (u: string) => void;
+  };
+  const origCreate = urlApi.createObjectURL;
+  const origRevoke = urlApi.revokeObjectURL;
+  urlApi.createObjectURL = () => "blob:stub";
+  urlApi.revokeObjectURL = () => {};
+  const origClick = HTMLAnchorElement.prototype.click;
+  let downloadName = "";
+  HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement): void {
+    downloadName = this.download;
+  };
+
+  try {
+    const container = document.createElement("div");
+    document.body.append(container);
+    renderLists(container);
+    await new Promise((r) => setTimeout(r, 0)); // getLists() resolves -> rows
+
+    const exp = container.querySelector<HTMLButtonElement>(".list-row__export");
+    expect(exp).not.toBeNull();
+
+    exp!.click();
+    await new Promise((r) => setTimeout(r, 0)); // exportList() resolves
+
+    expect(fetched).toContain("/api/lists/7");
+    expect(downloadName).toBe("squawk-sprint-7-7.json");
+  } finally {
+    urlApi.createObjectURL = origCreate;
+    urlApi.revokeObjectURL = origRevoke;
+    HTMLAnchorElement.prototype.click = origClick;
+  }
+});
