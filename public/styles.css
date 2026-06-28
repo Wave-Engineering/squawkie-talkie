@@ -423,7 +423,8 @@ body {
 }
 
 .list-row__delete,
-.list-row__cancel {
+.list-row__cancel,
+.list-row__export {
   padding: var(--space-2) var(--space-3);
   font: inherit;
   font-size: 0.875rem;
@@ -432,6 +433,11 @@ body {
   border: 1px solid rgba(230, 237, 243, 0.15);
   border-radius: var(--radius);
   cursor: pointer;
+}
+
+.list-row__export:hover {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.4);
 }
 
 .list-row__confirm {

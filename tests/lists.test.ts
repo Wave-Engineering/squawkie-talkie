@@ -1,7 +1,17 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { getLists } from "../src/client/api.ts";
-import { deleteReducer } from "../src/client/lists.ts";
+import { deleteReducer, exportFilename } from "../src/client/lists.ts";
+
+// --- exportFilename ----------------------------------------------------------
+
+test("exportFilename slugifies the name and appends the id", () => {
+  expect(exportFilename("Sprint 7 Regression", 3)).toBe(
+    "squawk-sprint-7-regression-3.json",
+  );
+  expect(exportFilename("  Weird/Name!! ", 12)).toBe("squawk-weird-name-12.json");
+  expect(exportFilename("", 5)).toBe("squawk-list-5.json"); // empty -> "list"
+});
 
 // --- api wrapper: error path -------------------------------------------------
 // The wrappers throw on any non-2xx so callers can `try/catch` instead of

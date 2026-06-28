@@ -12,9 +12,44 @@
  * same model is the seam realtime patching plugs into in #9.
  */
 import type { List } from "../server/types.ts";
-import { createList, deleteList, getLists } from "./api.ts";
+import { createList, deleteList, getList, getLists } from "./api.ts";
 import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
+
+// ---------------------------------------------------------------------------
+// Export helpers
+// ---------------------------------------------------------------------------
+
+/** Safe download filename for a list export, e.g. `squawk-sprint-7-3.json`. */
+export function exportFilename(name: string, id: number): string {
+  const slug =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "list";
+  return `squawk-${slug}-${id}.json`;
+}
+
+/** Trigger a browser download of `data` as a pretty-printed JSON file. */
+function downloadJson(filename: string, data: unknown): void {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json",
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Fetch a list (with its squawks) and download it as a JSON file. */
+async function exportList(list: List): Promise<void> {
+  const detail = await getList(list.id);
+  downloadJson(exportFilename(list.name, list.id), detail);
+}
 
 // ---------------------------------------------------------------------------
 // Confirm-state reducer (pure; the oracle for a row's delete control)
@@ -196,13 +231,25 @@ export function renderLists(container: HTMLElement): void {
       controls.replaceChildren();
 
       if (state === "idle") {
+        const exp = document.createElement("button");
+        exp.type = "button";
+        exp.className = "list-row__export";
+        exp.textContent = "Export";
+        exp.setAttribute("aria-label", `Export ${list.name}`);
+        exp.addEventListener("click", () => {
+          clearError();
+          void exportList(list).catch(() =>
+            showError(`Could not export "${list.name}".`),
+          );
+        });
+
         const del = document.createElement("button");
         del.type = "button";
         del.className = "list-row__delete";
         del.textContent = "Delete";
         del.setAttribute("aria-label", `Delete ${list.name}`);
         del.addEventListener("click", () => dispatch("request"));
-        controls.append(del);
+        controls.append(exp, del);
         return;
       }
 
