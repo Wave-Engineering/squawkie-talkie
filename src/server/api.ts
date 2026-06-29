@@ -14,6 +14,7 @@
  *   DELETE /api/lists/:id             -> { ok: true }                   (200/404)
  *   GET    /api/lists/:id/squawks     -> listSquawks(id)                (200/404)
  *   POST   /api/lists/:id/squawks     -> createSquawk(id, text, init)   (201/404)
+ *   POST   /api/squawks               -> quick-add by list name          (201/400)
  *   PATCH  /api/squawks/:id           -> updateSquawk(id, patch, init)  (200/404)
  *
  * Invalid input yields 400 `{ error }`; unknown list/squawk yields 404.
@@ -176,6 +177,14 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
     return json({ error: "method not allowed" }, 405);
   }
 
+  // /api/squawks (top-level quick-add)
+  if (segments.length === 2 && segments[1] === "squawks") {
+    if (method === "POST") {
+      return quickAddSquawkRoute(req);
+    }
+    return json({ error: "method not allowed" }, 405);
+  }
+
   // /api/squawks/:id
   if (segments.length === 3 && segments[1] === "squawks") {
     const id = parseId(segments[2]!);
@@ -228,6 +237,41 @@ async function createSquawkRoute(
   }
 
   const squawk = createSquawk(listId, text, initials);
+  broadcast({ type: "squawk.created", squawk });
+  return json(squawk, 201);
+}
+
+/** POST /api/squawks — body `{ list_name, text, initials }`. Quick-add by list name. */
+async function quickAddSquawkRoute(req: Request): Promise<Response> {
+  const body = await readJson(req);
+  if (!body) {
+    return json({ error: "invalid request body" }, 400);
+  }
+
+  if (typeof body.list_name !== "string" || !body.list_name.trim()) {
+    return json({ error: "list_name is required" }, 400);
+  }
+  const listName = body.list_name.trim();
+
+  if (body.text !== undefined && typeof body.text !== "string") {
+    return json({ error: "text must be a string" }, 400);
+  }
+  const text = typeof body.text === "string" ? body.text : "";
+
+  if (typeof body.initials !== "string") {
+    return json({ error: "initials is required" }, 400);
+  }
+  const initials = normalizeInitials(body.initials);
+
+  let list = getListByName(listName);
+  let listCreated = false;
+  if (!list) {
+    list = createList(listName);
+    listCreated = true;
+    broadcast({ type: "list.created", list: publicList(list) });
+  }
+
+  const squawk = createSquawk(list.id, text, initials);
   broadcast({ type: "squawk.created", squawk });
   return json(squawk, 201);
 }
