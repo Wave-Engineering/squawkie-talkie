@@ -210,6 +210,79 @@ test("invalid input -> 400", async () => {
   expect(r3.status).toBe(400);
 });
 
+// --- quick-add (POST /api/squawks) -------------------------------------------
+
+test("POST /api/squawks creates squawk on existing list", async () => {
+  const list = await createList("QuickExisting");
+  const res = await routeRequest(
+    req("POST", "/api/squawks", {
+      list_name: "QuickExisting",
+      text: "hello",
+      initials: "bj",
+    }),
+  );
+  expect(res.status).toBe(201);
+  const sq = await res.json();
+  expect(sq.list_id).toBe(list.id);
+  expect(sq.text).toBe("hello");
+  expect(sq.initials).toBe("BJ");
+  expect(sq.state).toBe("open");
+});
+
+test("POST /api/squawks auto-creates list when it does not exist", async () => {
+  const res = await routeRequest(
+    req("POST", "/api/squawks", {
+      list_name: "BrandNew",
+      text: "first squawk",
+      initials: "XY",
+    }),
+  );
+  expect(res.status).toBe(201);
+  const sq = await res.json();
+  expect(sq.text).toBe("first squawk");
+
+  // Verify the list was created.
+  const listRes = await routeRequest(
+    req("GET", "/api/lists/by-name?name=BrandNew"),
+  );
+  expect(listRes.status).toBe(200);
+  const list = await listRes.json();
+  expect(list.id).toBe(sq.list_id);
+  expect(list.squawks).toHaveLength(1);
+});
+
+test("POST /api/squawks allows empty initials", async () => {
+  const res = await routeRequest(
+    req("POST", "/api/squawks", {
+      list_name: "EmptyInit",
+      text: "no one",
+      initials: "",
+    }),
+  );
+  expect(res.status).toBe(201);
+  const sq = await res.json();
+  expect(sq.initials).toBe("");
+});
+
+test("POST /api/squawks validates required fields", async () => {
+  // Missing list_name.
+  expect(
+    (await routeRequest(req("POST", "/api/squawks", { text: "x", initials: "A" }))).status,
+  ).toBe(400);
+  // Missing initials key entirely.
+  expect(
+    (await routeRequest(req("POST", "/api/squawks", { list_name: "X", text: "x" }))).status,
+  ).toBe(400);
+  // Empty list_name (whitespace only).
+  expect(
+    (
+      await routeRequest(
+        req("POST", "/api/squawks", { list_name: "   ", text: "x", initials: "" }),
+      )
+    ).status,
+  ).toBe(400);
+});
+
 // --- not found ---------------------------------------------------------------
 
 test("missing list -> 404", async () => {
