@@ -8,6 +8,7 @@ const {
   createList,
   listLists,
   getList,
+  getListByName,
   deleteList,
   createSquawk,
   updateSquawk,
@@ -24,6 +25,14 @@ test("createList and getList round-trip", () => {
   expect(getList(list.id)).toEqual(list);
   expect(getList(999999)).toBeNull();
   expect(listLists().some((l) => l.id === list.id)).toBe(true);
+});
+
+test("getListByName returns the oldest exact match, or null", () => {
+  const first = createList("Dupe Name");
+  createList("Dupe Name"); // a later list with the same name
+  expect(getListByName("Dupe Name")?.id).toBe(first.id); // oldest wins
+  expect(getListByName("no such list")).toBeNull();
+  expect(getListByName("dupe name")).toBeNull(); // exact match (case-sensitive)
 });
 
 test("seq is monotonic and never reused", () => {

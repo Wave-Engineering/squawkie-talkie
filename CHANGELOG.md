@@ -6,6 +6,11 @@ versions below are logical milestones (Phase 1 → tech-debt → Phase 2), not g
 
 ## [Unreleased]
 
+### Added
+- `GET /api/lists/by-name?name=<name>` — look up a list (with its squawks) by exact name
+  (oldest match when names duplicate; `400` if `name` missing, `404` if none).
+
+### Docs
 - Project documentation backfill: `README`, `AGENTS.md`, `CHANGELOG`, and
   `docs/{architecture,requirements,deployment,testing}.md`.
 

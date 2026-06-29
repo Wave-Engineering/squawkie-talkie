@@ -78,6 +78,7 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | GET | `/api/lists` | — | `List[]` (no `next_seq`) |
 | POST | `/api/lists` | `{ name }` | `201 List` |
 | GET | `/api/lists/:id` | — | `{ ...List, squawks: Squawk[] }` (squawks newest-first) |
+| GET | `/api/lists/by-name?name=…` | — | same shape as by-id, looked up by **exact name** (oldest match — names aren't unique); `400` if `name` missing, `404` if none |
 | DELETE | `/api/lists/:id` | — | `{ ok: true }` (cascades squawks) |
 | GET | `/api/lists/:id/squawks` | — | `Squawk[]` |
 | POST | `/api/lists/:id/squawks` | `{ text, initials }` | `201 Squawk` |
