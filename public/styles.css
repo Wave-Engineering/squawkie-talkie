@@ -7,13 +7,21 @@
  */
 
 :root {
-  /* Surfaces */
+  /* Surfaces — near-black base, two raised tiers for depth */
   --bg: #0a0b0f; /* near-black */
   --surface: #12141c;
+  --surface-2: #171b26; /* raised: focused inputs, hovered rows */
   --text: #e6edf3;
+  --text-dim: rgba(230, 237, 243, 0.55);
+  --text-faint: rgba(230, 237, 243, 0.32);
+
+  /* Hairlines */
+  --border: rgba(230, 237, 243, 0.1);
+  --border-strong: rgba(230, 237, 243, 0.18);
 
   /* Accent (single) */
   --accent: #00e5ff; /* cyan */
+  --accent-dim: rgba(0, 229, 255, 0.4);
 
   /* State colors */
   --state-open: #00e5ff;
@@ -54,21 +62,41 @@ body {
 
 body {
   margin: 0;
-  background: var(--bg);
+  min-height: 100%;
   color: var(--text);
   font-family: var(--font-sans);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Near-black base + a barely-there grid and a cool top glow for depth. */
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(
+      1200px 480px at 50% -10%,
+      rgba(0, 229, 255, 0.06),
+      transparent 70%
+    ),
+    linear-gradient(rgba(230, 237, 243, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(230, 237, 243, 0.018) 1px, transparent 1px);
+  background-size:
+    100% 100%,
+    40px 40px,
+    40px 40px;
+  background-attachment: fixed;
 }
 
 /* Header */
 .app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4) var(--space-6);
-  background: var(--surface);
-  border-bottom: 1px solid rgba(230, 237, 243, 0.08);
+  background: linear-gradient(180deg, var(--surface), rgba(18, 20, 28, 0.92));
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 229, 255, 0.12);
 }
 
 .app-header__logo {
@@ -85,9 +113,10 @@ body {
 .app-header__title {
   flex: 1;
   margin: 0;
-  font-size: 1.125rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 1.05rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
 }
 
 .app-header__initials {
@@ -187,9 +216,17 @@ body {
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
   background: var(--surface);
-  border: 1px solid rgba(230, 237, 243, 0.08);
+  border: 1px solid var(--border);
   border-left: 3px solid transparent;
   border-radius: var(--radius);
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.squawk-row:hover,
+.squawk-row:focus-within {
+  background: var(--surface-2);
 }
 
 /* Row 0 — the always-empty new-squawk input. */
@@ -210,12 +247,23 @@ body {
   font: inherit;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid rgba(230, 237, 243, 0.12);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 .squawk-row__text {
   width: 100%;
+}
+
+/* Focused input — the clearly-active editing state: raised surface + accent
+   edge so a long entry reads as "expanded into focus" (#6). */
+.squawk-row__text:focus {
+  outline: none;
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
 }
 
 .squawk-row__state {
@@ -223,16 +271,31 @@ body {
   cursor: pointer;
 }
 
-/* Per-state edge color — open / retired / recorded are visually distinct.
-   (The .state-* color classes above also tint the row's seq + chrome.) */
+/* Per-state edge color + a faint matching glow — open / retired / recorded are
+   visually distinct. Retired recedes (dimmed); recorded reads as "filed
+   elsewhere" (dimmed + struck through while idle). */
 .squawk-row.state-open {
   border-left-color: var(--state-open);
+  box-shadow: inset 6px 0 12px -10px var(--state-open);
 }
 .squawk-row.state-retired {
   border-left-color: var(--state-retired);
+  opacity: 0.78;
+}
+.squawk-row.state-retired .squawk-row__text {
+  color: var(--text-dim);
 }
 .squawk-row.state-recorded {
   border-left-color: var(--state-recorded);
+  box-shadow: inset 6px 0 12px -10px var(--state-recorded);
+}
+.squawk-row.state-recorded .squawk-row__text {
+  color: var(--text-dim);
+}
+/* Strike the recorded text only while idle, so editing it stays legible. */
+.squawk-row.state-recorded .squawk-row__text:not(:focus) {
+  text-decoration: line-through;
+  text-decoration-color: var(--state-recorded);
 }
 
 /* Hover popover: the initials of whoever last recorded/edited the squawk.
@@ -350,7 +413,13 @@ body {
 }
 
 .lists__new-input::placeholder {
-  color: rgba(230, 237, 243, 0.4);
+  color: var(--text-faint);
+}
+
+.lists__new-input:focus {
+  outline: none;
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
 }
 
 .lists__new-button {
@@ -395,8 +464,17 @@ body {
   gap: var(--space-4);
   padding: var(--space-4) var(--space-5);
   background: var(--surface);
-  border: 1px solid rgba(230, 237, 243, 0.08);
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
   border-radius: var(--radius);
+  transition:
+    background 120ms ease,
+    border-left-color 120ms ease;
+}
+
+.list-row:hover {
+  background: var(--surface-2);
+  border-left-color: var(--accent);
 }
 
 .list-row__open {
@@ -460,4 +538,21 @@ body {
 .list-row__deleting {
   font-size: 0.875rem;
   color: var(--state-retired);
+}
+
+/* Subtle cyberpunk scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 229, 255, 0.25) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 229, 255, 0.22);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 229, 255, 0.4);
 }
