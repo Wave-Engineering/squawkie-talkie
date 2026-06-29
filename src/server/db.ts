@@ -85,6 +85,18 @@ export function getList(id: number): List | null {
 }
 
 /**
+ * Return the list with this exact `name`, or null if none. Names are not unique,
+ * so the oldest match (lowest id) wins.
+ */
+export function getListByName(name: string): List | null {
+  return (
+    (getDb()
+      .query("SELECT * FROM lists WHERE name = ? ORDER BY id ASC LIMIT 1")
+      .get(name) as List | null) ?? null
+  );
+}
+
+/**
  * Delete a list and (via the FK cascade) all of its squawks.
  * Returns true if a list row was removed.
  */

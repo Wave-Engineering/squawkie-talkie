@@ -58,6 +58,8 @@ implementation; for design see [`architecture.md`](architecture.md).
 - **R-23** `next_seq` never appears in any API response.
 - **R-24** A `PATCH /api/squawks/:id` with neither `text` nor `state` is rejected and does
   not change the squawk (no `updated_at` bump).
+- **R-27** `GET /api/lists/by-name?name=<name>` returns the exact-name list (with its
+  squawks; oldest match when names duplicate); `400` if `name` is missing, `404` if none.
 
 ## Non-functional
 

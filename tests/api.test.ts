@@ -68,6 +68,26 @@ test("GET list includes its squawks; DELETE removes it", async () => {
   );
 });
 
+test("GET /api/lists/by-name returns the list (with squawks) or 400/404", async () => {
+  const list = await createList("Findable");
+  await routeRequest(
+    req("POST", `/api/lists/${list.id}/squawks`, { text: "x", initials: "AA" }),
+  );
+
+  const ok = await routeRequest(req("GET", "/api/lists/by-name?name=Findable"));
+  expect(ok.status).toBe(200);
+  const body = await ok.json();
+  expect(body.id).toBe(list.id);
+  expect(body.squawks).toHaveLength(1);
+  expect("next_seq" in body).toBe(false);
+
+  // Missing name -> 400; unknown name -> 404.
+  expect((await routeRequest(req("GET", "/api/lists/by-name"))).status).toBe(400);
+  expect(
+    (await routeRequest(req("GET", "/api/lists/by-name?name=Nope"))).status,
+  ).toBe(404);
+});
+
 test("list responses do not expose the internal next_seq counter", async () => {
   const created = await createList("Hygiene");
   expect("next_seq" in created).toBe(false);

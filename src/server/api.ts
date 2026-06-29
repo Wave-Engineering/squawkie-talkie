@@ -24,6 +24,7 @@ import {
   createSquawk,
   deleteList,
   getList,
+  getListByName,
   listLists,
   listSquawks,
   updateSquawk,
@@ -110,6 +111,27 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
       return createListRoute(req);
     }
     return json({ error: "method not allowed" }, 405);
+  }
+
+  // /api/lists/by-name?name=<name> — look up a list by its exact name.
+  // Checked before /api/lists/:id so "by-name" isn't parsed as an id.
+  if (
+    segments.length === 3 &&
+    segments[1] === "lists" &&
+    segments[2] === "by-name"
+  ) {
+    if (method !== "GET") {
+      return json({ error: "method not allowed" }, 405);
+    }
+    const name = url.searchParams.get("name");
+    if (!name) {
+      return json({ error: "name query parameter is required" }, 400);
+    }
+    const list = getListByName(name);
+    if (!list) {
+      return json({ error: "list not found" }, 404);
+    }
+    return json({ ...publicList(list), squawks: listSquawks(list.id) });
   }
 
   // /api/lists/:id
