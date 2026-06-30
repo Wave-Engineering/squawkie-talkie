@@ -100,29 +100,29 @@ body {
 }
 
 .app-header__logo {
+  flex: 1;
   display: flex;
   align-items: center;
+  gap: var(--space-3);
 }
 
 .app-header__logo-mark {
   display: block;
-  color: var(--accent);
-  filter: drop-shadow(0 0 4px rgba(0, 229, 255, 0.45));
+  height: 66px;
+  width: auto;
 }
 
-.app-header__title {
-  flex: 1;
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
+.app-header__wordmark {
+  display: block;
+  height: 56px;
+  width: auto;
 }
 
 .app-header__initials {
-  min-width: 2.5rem;
-  padding: var(--space-1) var(--space-3);
+  min-width: 3.75rem;
+  padding: var(--space-2) var(--space-4);
   font-family: var(--font-mono);
+  font-size: 1.5rem;
   font-weight: 600;
   text-align: center;
   color: var(--accent);
