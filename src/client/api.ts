@@ -106,3 +106,8 @@ export function updateSquawk(
     body: JSON.stringify({ ...patch, initials }),
   });
 }
+
+/** DELETE /api/squawks/:id — remove a squawk (undo within settle-in window). */
+export function deleteSquawk(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/squawks/${id}`, { method: "DELETE" });
+}

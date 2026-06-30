@@ -32,6 +32,7 @@ export type RealtimeEvent =
   | { type: "list.deleted"; id: number }
   | { type: "squawk.created"; squawk: Squawk }
   | { type: "squawk.updated"; squawk: Squawk }
+  | { type: "squawk.deleted"; id: number }
   // Forward-compatible catch-all for event types this client doesn't model yet.
   | { type: string; [k: string]: unknown };
 
@@ -62,6 +63,8 @@ export interface DetailViewBinding {
    * is left untouched so the typing viewer's cursor is preserved.
    */
   patchSquawk(squawk: Squawk, applyToInput: boolean): void;
+  /** Remove a squawk's row (undo/delete). */
+  removeSquawk(id: number): void;
 }
 
 /** Whichever view is presently mounted, or none. */
@@ -156,6 +159,12 @@ export function applyEvent(event: RealtimeEvent, ctx: ApplyContext): void {
           );
           view.patchSquawk(event.squawk, applyToInput);
         }
+      }
+      return;
+    }
+    case "squawk.deleted": {
+      if (view?.kind === "detail" && typeof event.id === "number") {
+        view.removeSquawk(event.id);
       }
       return;
     }

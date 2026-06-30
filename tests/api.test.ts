@@ -283,6 +283,33 @@ test("POST /api/squawks validates required fields", async () => {
   ).toBe(400);
 });
 
+// --- delete squawk (undo) ----------------------------------------------------
+
+test("DELETE /api/squawks/:id removes the squawk", async () => {
+  const list = await createList("UndoTest");
+  const sq = await (
+    await routeRequest(
+      req("POST", `/api/lists/${list.id}/squawks`, { text: "oops", initials: "BJ" }),
+    )
+  ).json();
+
+  const res = await routeRequest(req("DELETE", `/api/squawks/${sq.id}`));
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ ok: true });
+
+  // Squawk is gone from the list
+  const detail = await (
+    await routeRequest(req("GET", `/api/lists/${list.id}`))
+  ).json();
+  expect(detail.squawks).toHaveLength(0);
+});
+
+test("DELETE /api/squawks/:id returns 404 for unknown squawk", async () => {
+  expect(
+    (await routeRequest(req("DELETE", "/api/squawks/999999"))).status,
+  ).toBe(404);
+});
+
 // --- not found ---------------------------------------------------------------
 
 test("missing list -> 404", async () => {

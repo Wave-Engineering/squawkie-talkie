@@ -67,6 +67,7 @@ function detailSink(
     patches,
     upsertSquawk: (s) => inserts.push(s),
     patchSquawk: (s, applyToInput) => patches.push({ squawk: s, applyToInput }),
+    removeSquawk: () => {},
   };
 }
 
