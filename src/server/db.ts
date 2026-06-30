@@ -194,6 +194,14 @@ export function updateSquawk(
   return row;
 }
 
+/**
+ * Delete a squawk by id. Returns true if a row was removed.
+ * Used only for the "undo" window (within seconds of creation).
+ */
+export function deleteSquawk(id: number): boolean {
+  return getDb().query("DELETE FROM squawks WHERE id = ?").run(id).changes > 0;
+}
+
 /** Return a list's squawks, newest first (`seq DESC`). */
 export function listSquawks(listId: number): Squawk[] {
   return getDb()

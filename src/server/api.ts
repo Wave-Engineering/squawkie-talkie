@@ -16,6 +16,7 @@
  *   POST   /api/lists/:id/squawks     -> createSquawk(id, text, init)   (201/404)
  *   POST   /api/squawks               -> quick-add by list name          (201/400)
  *   PATCH  /api/squawks/:id           -> updateSquawk(id, patch, init)  (200/404)
+ *   DELETE /api/squawks/:id           -> deleteSquawk(id)               (200/404)
  *
  * Invalid input yields 400 `{ error }`; unknown list/squawk yields 404.
  */
@@ -24,6 +25,7 @@ import {
   createList,
   createSquawk,
   deleteList,
+  deleteSquawk,
   getList,
   getListByName,
   listLists,
@@ -193,6 +195,13 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
     }
     if (method === "PATCH") {
       return patchSquawkRoute(req, id);
+    }
+    if (method === "DELETE") {
+      if (deleteSquawk(id)) {
+        broadcast({ type: "squawk.deleted", id });
+        return json({ ok: true });
+      }
+      return json({ error: "squawk not found" }, 404);
     }
     return json({ error: "method not allowed" }, 405);
   }

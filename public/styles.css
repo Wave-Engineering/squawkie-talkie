@@ -540,6 +540,163 @@ body {
   color: var(--state-retired);
 }
 
+/* --- Vi-mode visual system --- */
+
+/* Amber warning color for autosave countdown */
+:root {
+  --warn-amber: #f59e0b;
+  --warn-amber-glow: rgba(245, 158, 11, 0.45);
+}
+
+/* Pulsing glow keyframe for nav-focused row (slow throb, 2-3s) */
+@keyframes nav-throb {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.3), 0 0 10px rgba(0, 229, 255, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.55), 0 0 18px rgba(0, 229, 255, 0.5);
+  }
+}
+
+/* Nav-focused row: pulsing glow border */
+.squawk-row--nav-focus {
+  animation: nav-throb 2.5s ease-in-out infinite;
+  border-left-color: var(--accent) !important;
+  background: var(--surface-2);
+}
+
+.squawk-row--nav-focus .squawk-row__text {
+  cursor: default;
+}
+
+/* Edit mode row: steady accent glow (no pulse — you're active) */
+.squawk-row--editing {
+  box-shadow: 0 0 0 2px rgba(0, 229, 255, 0.5), 0 0 14px rgba(0, 229, 255, 0.4);
+  border-left-color: var(--accent) !important;
+  background: var(--surface-2);
+  animation: none;
+}
+
+.squawk-row--editing .squawk-row__text {
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
+  cursor: text;
+}
+
+/* Amber warning at 15s — glow transitions from accent to amber */
+.squawk-row--warn {
+  box-shadow: 0 0 0 2px var(--warn-amber-glow), 0 0 14px var(--warn-amber-glow);
+  border-left-color: var(--warn-amber) !important;
+  transition: box-shadow 1s ease, border-left-color 1s ease;
+}
+
+.squawk-row--warn .squawk-row__text {
+  border-color: rgba(245, 158, 11, 0.4);
+  transition: border-color 1s ease;
+}
+
+/* Glazed/sealed look for non-focused rows when stack has an edit in progress */
+.detail__stack--has-edit .squawk-row:not(.squawk-row--editing):not(.squawk-row--new) {
+  opacity: 0.82;
+}
+.detail__stack--has-edit .squawk-row:not(.squawk-row--editing):not(.squawk-row--new) .squawk-row__text {
+  color: var(--text-dim);
+}
+
+/* Nav-mode inputs look non-editable */
+.squawk-row__text[data-vi-mode="nav"] {
+  cursor: default;
+  caret-color: transparent;
+}
+
+/* Help hint (corner ? button) */
+.detail__help-hint {
+  position: fixed;
+  bottom: var(--space-4);
+  right: var(--space-4);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  z-index: 5;
+}
+.detail__help-hint:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* Keymap overlay */
+.keymap-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 6, 10, 0.8);
+  backdrop-filter: blur(4px);
+}
+
+.keymap-overlay__content {
+  width: min(28rem, 90%);
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  border-radius: var(--radius);
+  box-shadow: 0 0 32px rgba(0, 229, 255, 0.15);
+}
+
+.keymap-overlay__title {
+  margin: 0 0 var(--space-4);
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--accent);
+  letter-spacing: 0.04em;
+}
+
+.keymap-overlay__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.keymap-overlay__table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+}
+.keymap-overlay__table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.keymap-overlay__table kbd {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.keymap-overlay__dismiss {
+  margin: var(--space-4) 0 0;
+  font-size: 0.8rem;
+  color: var(--text-faint);
+  text-align: center;
+}
+
 /* Subtle cyberpunk scrollbar */
 * {
   scrollbar-width: thin;

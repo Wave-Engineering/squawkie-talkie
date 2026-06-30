@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import type { Squawk } from "../src/server/types.ts";
 import {
   countByState,
+  cycleState,
   debounce,
   onEnter,
   stateClass,
@@ -122,4 +123,18 @@ test("enter handler ignores non-Enter keys", () => {
   expect(onEnter({ key: "a", isNewRow: false, value: "hi" }).action).toBe(
     "ignore",
   );
+});
+
+// --- cycleState ---------------------------------------------------------------
+
+test("cycleState forward wraps through open → retired → recorded → open", () => {
+  expect(cycleState("open", "forward")).toBe("retired");
+  expect(cycleState("retired", "forward")).toBe("recorded");
+  expect(cycleState("recorded", "forward")).toBe("open");
+});
+
+test("cycleState backward wraps through open → recorded → retired → open", () => {
+  expect(cycleState("open", "backward")).toBe("recorded");
+  expect(cycleState("recorded", "backward")).toBe("retired");
+  expect(cycleState("retired", "backward")).toBe("open");
 });

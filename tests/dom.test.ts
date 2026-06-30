@@ -188,19 +188,25 @@ test("Up/Down arrows navigate between the new box and squawk rows", async () => 
   expect(document.activeElement).toBe(newInput);
 });
 
-test("Escape on an existing row reverts to the last-saved text", async () => {
+test("Escape in nav mode jumps focus to the entry box", async () => {
   const { renderList } = await import("../src/client/detail.ts");
   const container = document.createElement("div");
   document.body.append(container);
   await renderList(container, "1");
 
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
   const input10 = container.querySelector<HTMLInputElement>(
     '[data-squawk-id="10"] input',
   )!;
-  input10.focus();
-  input10.value = "half-typed change I want to abandon";
+  // Navigate into the stack first (so focusedSquawkId is set)
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  expect(document.activeElement).toBe(input10);
+  // Now Escape in nav mode → jump to entry box
   press(input10, "Escape");
-  expect(input10.value).toBe("squawk 2"); // restored to last-saved
+  expect(document.activeElement).toBe(newInput);
 });
 
 test("Escape on the new-squawk box clears it", async () => {
@@ -216,6 +222,150 @@ test("Escape on the new-squawk box clears it", async () => {
   newInput.value = "abandon me";
   press(newInput, "Escape");
   expect(newInput.value).toBe("");
+});
+
+// --- Vi-mode: j/k navigation -------------------------------------------------
+
+test("j/k navigate between rows like ArrowDown/ArrowUp", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  const input10 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="10"] input',
+  )!;
+  const input11 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="11"] input',
+  )!;
+
+  // Empty entry box → j navigates down
+  newInput.focus();
+  newInput.value = "";
+  press(newInput, "j");
+  expect(document.activeElement).toBe(input10);
+  // k navigates up from a squawk row
+  press(input10, "k");
+  expect(document.activeElement).toBe(newInput);
+  // Navigate back down with j (now on stack via ArrowDown)
+  press(newInput, "ArrowDown");
+  expect(document.activeElement).toBe(input10);
+  press(input10, "j");
+  expect(document.activeElement).toBe(input11);
+});
+
+// --- Vi-mode: state cycling with arrows in nav mode --------------------------
+
+test("Left/Right arrows cycle squawk state in nav mode", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  // Navigate to first squawk
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  newInput.focus();
+  press(newInput, "ArrowDown");
+
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const select10 = row10.querySelector<HTMLSelectElement>("select")!;
+  const input10 = row10.querySelector<HTMLInputElement>("input")!;
+
+  // Starts as "open"
+  expect(select10.value).toBe("open");
+  // Right → forward → retired
+  press(input10, "ArrowRight");
+  expect(select10.value).toBe("retired");
+  expect(row10.classList.contains("state-retired")).toBe(true);
+  // Right → forward → recorded
+  press(input10, "ArrowRight");
+  expect(select10.value).toBe("recorded");
+  // Left → backward → retired
+  press(input10, "ArrowLeft");
+  expect(select10.value).toBe("retired");
+});
+
+// --- Vi-mode: nav-focus visual class -----------------------------------------
+
+test("navigated row gets squawk-row--nav-focus class", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const row11 = container.querySelector<HTMLElement>('[data-squawk-id="11"]')!;
+
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  expect(row10.classList.contains("squawk-row--nav-focus")).toBe(true);
+  expect(row11.classList.contains("squawk-row--nav-focus")).toBe(false);
+
+  // Move down — previous loses focus class
+  const input10 = row10.querySelector<HTMLInputElement>("input")!;
+  press(input10, "ArrowDown");
+  expect(row10.classList.contains("squawk-row--nav-focus")).toBe(false);
+  expect(row11.classList.contains("squawk-row--nav-focus")).toBe(true);
+});
+
+// --- Vi-mode: Home key jumps to entry ----------------------------------------
+
+test("Home key always jumps to the entry box", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  const input10 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="10"] input',
+  )!;
+
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  expect(document.activeElement).toBe(input10);
+  press(input10, "Home");
+  expect(document.activeElement).toBe(newInput);
+});
+
+// --- Vi-mode: ? keymap overlay -----------------------------------------------
+
+test("? key shows the keymap overlay and any key dismisses it", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(
+    ".squawk-row--new .squawk-row__text",
+  )!;
+  // Navigate to a squawk row so we're in nav mode on a row
+  newInput.focus();
+  press(newInput, "ArrowDown");
+
+  const input10 = container.querySelector<HTMLInputElement>(
+    '[data-squawk-id="10"] input',
+  )!;
+  press(input10, "?");
+  // Overlay should be in the DOM
+  expect(container.querySelector(".keymap-overlay")).not.toBeNull();
+
+  // Dismiss with any key (use setTimeout 0 to match the implementation)
+  await new Promise((r) => setTimeout(r, 0));
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "x", bubbles: true }),
+  );
+  expect(container.querySelector(".keymap-overlay")).toBeNull();
 });
 
 // --- Phase 2: hover recorder badge ------------------------------------------
