@@ -229,3 +229,7 @@ public/dist/
 
 # SQLite database (squawk.db and its -wal/-shm sidecars)
 squawk.db*
+
+# Playwright
+test-results/
+playwright-report/

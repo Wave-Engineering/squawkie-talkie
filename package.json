@@ -7,10 +7,12 @@
     "dev": "bun run src/server/index.ts",
     "build": "bun build src/client/app.ts --outdir public/dist",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "test:e2e": "bunx playwright test"
   },
   "devDependencies": {
     "@happy-dom/global-registrator": "^20.10.6",
+    "@playwright/test": "^1.61.1",
     "bun-types": "latest",
     "typescript": "^5"
   }
