@@ -407,6 +407,13 @@ export async function renderList(
       showKeymapOverlay();
       return;
     }
+
+    // Block all other printable keys from reaching the input in nav mode.
+    // Without this, unrecognized keys silently type into the focused input,
+    // desynchronizing the mode system from the DOM state.
+    if (key.length === 1 && focusedSquawkId !== null) {
+      event.preventDefault();
+    }
   }
 
   function handleEditKey(event: KeyboardEvent): void {
@@ -544,15 +551,15 @@ export async function renderList(
   helpHint.addEventListener("click", showKeymapOverlay);
 
   function insertSquawk(squawk: Squawk, isLocal = false): void {
+    if (isLocal) {
+      settleInTimes.set(squawk.id, Date.now());
+      undoBuffer = { id: squawk.id, text: squawk.text };
+    }
     if (rowHandles.has(squawk.id)) return;
     model.set(squawk.id, squawk);
     const handle = buildSquawkRow(squawk, id, initials, model, updateCounts);
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
-    if (isLocal) {
-      settleInTimes.set(squawk.id, Date.now());
-      undoBuffer = { id: squawk.id, text: squawk.text };
-    }
     updateCounts();
   }
 
@@ -615,6 +622,9 @@ export async function renderList(
   });
 
   // --- Global keyboard dispatcher (on the stack container) ---
+  // Uses capture phase so preventDefault() fires before the input's default
+  // text-insertion behavior (which happens between the target's keydown and
+  // the bubbling phase in some browsers).
   stack.addEventListener("keydown", (event) => {
     // Don't intercept when focus is on the new-row input (it handles its own keys)
     if (document.activeElement === newRow.input) return;
@@ -626,7 +636,7 @@ export async function renderList(
     } else if (mode === "edit") {
       handleEditKey(event);
     }
-  });
+  }, true);
 
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
