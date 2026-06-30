@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+PORT="${PORT:-7700}"
+
+if ! command -v bun &>/dev/null; then
+  export PATH="$HOME/.bun/bin:$PATH"
+  if ! command -v bun &>/dev/null; then
+    echo "Error: bun not found. Install it: https://bun.sh" >&2
+    exit 1
+  fi
+fi
+
+echo "Installing dependencies..."
+bun install --frozen-lockfile
+
+echo "Building client bundle..."
+bun run build
+
+echo ""
+echo "  🐦 squawk-to-me-goose"
+echo "  Server starting on http://localhost:${PORT}"
+echo ""
+
+PORT="$PORT" exec bun run src/server/index.ts
