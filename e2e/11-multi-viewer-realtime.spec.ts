@@ -13,11 +13,11 @@ test.describe("Multi-viewer realtime", () => {
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
 
-    // Create a list via A
+    // Create a list via A — auto-navigates to detail
     await pageA.goto("/");
     await pageA.fill(".lists__new-input", "RealtimeSync");
     await pageA.click(".lists__new-button");
-    await pageA.click('.list-row__open:has-text("RealtimeSync")');
+    await expect(pageA.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
 
     // B navigates to the same list
     await pageB.goto("/");
@@ -45,18 +45,17 @@ test.describe("Multi-viewer realtime", () => {
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
 
-    // A creates list + squawk
+    // A creates list + squawk — auto-navigates to detail
     await pageA.goto("/");
     await pageA.fill(".lists__new-input", "StateSync");
     await pageA.click(".lists__new-button");
-    await pageA.click('.list-row__open:has-text("StateSync")');
+    await expect(pageA.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
     const entryA = pageA.locator(".squawk-row--new .squawk-row__text");
     await entryA.fill("sync me");
     await entryA.press("Enter");
 
-    // B opens the same list
-    await pageB.goto("/");
-    await pageB.click('.list-row__open:has-text("StateSync")');
+    // B opens the same list via URL (A already navigated)
+    await pageB.goto(pageA.url());
     await expect(pageB.locator("[data-squawk-id]")).toHaveCount(1);
 
     // B changes state via select
@@ -83,18 +82,17 @@ test.describe("Multi-viewer realtime", () => {
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
 
-    // A creates list + squawk
+    // A creates list + squawk — auto-navigates to detail
     await pageA.goto("/");
     await pageA.fill(".lists__new-input", "NoClobber");
     await pageA.click(".lists__new-button");
-    await pageA.click('.list-row__open:has-text("NoClobber")');
+    await expect(pageA.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
     const entryA = pageA.locator(".squawk-row--new .squawk-row__text");
     await entryA.fill("editable");
     await entryA.press("Enter");
 
-    // B opens, starts editing the squawk
-    await pageB.goto("/");
-    await pageB.click('.list-row__open:has-text("NoClobber")');
+    // B opens the same list via URL
+    await pageB.goto(pageA.url());
     await expect(pageB.locator("[data-squawk-id]")).toHaveCount(1);
     const inputB = pageB.locator("[data-squawk-id] input").first();
     // Enter edit mode via keyboard

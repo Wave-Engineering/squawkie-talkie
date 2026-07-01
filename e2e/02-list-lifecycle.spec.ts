@@ -6,13 +6,9 @@ test.describe("List lifecycle", () => {
   }) => {
     await page.goto("/");
 
-    // Create
+    // Create — auto-navigates to detail view
     await page.fill(".lists__new-input", "E2E List");
     await page.click(".lists__new-button");
-    await expect(page.locator('.list-row__open:has-text("E2E List")')).toBeVisible();
-
-    // Navigate into it
-    await page.click('.list-row__open:has-text("E2E List")');
     await expect(page.locator(".detail__title")).toHaveText("E2E List");
     const entry = page.locator(".squawk-row--new .squawk-row__text");
     await expect(entry).toBeFocused();

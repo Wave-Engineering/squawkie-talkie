@@ -177,6 +177,7 @@ export function renderLists(container: HTMLElement): void {
         .then((created) => {
           addList(created);
           input.value = "";
+          navigate(`#/list/${created.id}`);
         })
         .catch(() => {
           showError(`Could not create "${name}".`);

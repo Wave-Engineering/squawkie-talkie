@@ -232,6 +232,7 @@ export async function renderList(
     handle.input.setSelectionRange(end, end);
     resetEditTimer(squawkId);
     stack.classList.add("detail__stack--has-edit");
+    updateModeBar();
   }
 
   function exitEditMode(save = true): void {
@@ -252,6 +253,7 @@ export async function renderList(
       handle.input.dataset.viMode = "nav";
       handle.el.classList.add("squawk-row--nav-focus");
     }
+    updateModeBar();
   }
 
   function resetEditTimer(squawkId: number): void {
@@ -593,6 +595,7 @@ export async function renderList(
       event.stopPropagation();
       mode = "nav";
       navigateRow("down");
+      updateModeBar();
       return;
     }
     if (event.key === "?") {
@@ -647,7 +650,28 @@ export async function renderList(
   }
   updateCounts();
 
-  container.append(header, stack, helpHint);
+  // --- Mode indicator bar (vim-style footer) ---
+  const modeBar = document.createElement("div");
+  modeBar.className = "detail__mode-bar";
+  modeBar.textContent = "-- INSERT --";
+
+  function updateModeBar(): void {
+    if (document.activeElement === newRow.input) {
+      modeBar.textContent = "-- INSERT --";
+      modeBar.dataset.mode = "insert";
+    } else if (mode === "edit") {
+      modeBar.textContent = "-- EDIT --";
+      modeBar.dataset.mode = "edit";
+    } else {
+      modeBar.textContent = "-- NAV --";
+      modeBar.dataset.mode = "nav";
+    }
+  }
+
+  newRow.input.addEventListener("focus", updateModeBar);
+  newRow.input.addEventListener("blur", updateModeBar);
+
+  container.append(header, stack, helpHint, modeBar);
   newRow.input.focus();
 
   // Realtime seam

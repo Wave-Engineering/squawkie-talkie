@@ -613,7 +613,7 @@ body {
 /* Help hint (corner ? button) */
 .detail__help-hint {
   position: fixed;
-  bottom: var(--space-4);
+  bottom: calc(var(--space-4) + 1.75rem);
   right: var(--space-4);
   width: 2rem;
   height: 2rem;
@@ -632,6 +632,24 @@ body {
 .detail__help-hint:hover {
   color: var(--accent);
   border-color: var(--accent-dim);
+}
+
+/* Mode indicator bar */
+.detail__mode-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: var(--space-1) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--state-recorded);
+  background: var(--surface);
+  border-top: 1px solid rgba(192, 38, 211, 0.3);
+  box-shadow: 0 -1px 0 rgba(192, 38, 211, 0.15);
 }
 
 /* Keymap overlay */

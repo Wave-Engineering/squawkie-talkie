@@ -8,8 +8,7 @@ test.describe("Export list to JSON", () => {
     await page.goto("/");
     await page.fill(".lists__new-input", "ExportMe");
     await page.click(".lists__new-button");
-
-    await page.click('.list-row__open:has-text("ExportMe")');
+    await expect(page.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
     await addSquawk(page, "exported squawk");
     await page.goto("/");
 
