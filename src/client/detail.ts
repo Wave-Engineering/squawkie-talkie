@@ -76,8 +76,9 @@ const COACH_ENTRY_STEP: CoachStep = {
   target: ".squawk-row--new .squawk-row__text",
   placement: "bottom",
   body:
-    "Top box is always empty, always waiting. Type, hit Enter, you're on the " +
-    "next line. It autosaves — quit babysitting it.",
+    "Now you're cooking — that's your first squawk list, open. This top box " +
+    "is always empty, always waiting: type, hit Enter, you're on the next " +
+    "line. It autosaves — quit babysitting it.",
 };
 
 /**
@@ -96,16 +97,30 @@ function coachSquawkSteps(stack: HTMLElement): CoachStep[] {
         "while you do. I'll certainly have the time.",
     },
     {
+      target: () => stack.querySelector("[data-squawk-id]"),
+      placement: "left",
+      body:
+        "Squawked something you didn't mean to? `u` takes it back — but only " +
+        "for 30 seconds. After that it's locked in. We look ahead, not back. " +
+        "Onward.",
+    },
+    {
       target: () =>
         stack.querySelector("[data-squawk-id] .squawk-row__recorder"),
       placement: "left",
-      body:
-        "`u` undoes; hover a squawk to see who flagged it — no clicking required.",
+      body: "Hover any squawk to see who flagged it — no clicking required.",
     },
     {
       target: ".detail__counts",
       placement: "bottom",
-      body: "Everybody sees this live. No locks, last edit wins. Play nice.",
+      body:
+        "Your running tally: Open · Retired · rEcorded — live, as squawks " +
+        "change state.",
+    },
+    {
+      target: () => stack.querySelector("[data-squawk-id]"),
+      placement: "left",
+      body: "Everybody sees this live — no locks, last edit wins. Play nice.",
     },
   ];
 }

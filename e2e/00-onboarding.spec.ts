@@ -108,4 +108,27 @@ test.describe("Onboarding: initials welcome + empty-system first-list gate", () 
     await expect(page.locator(".modal__welcome")).toHaveCount(0);
     await expect(page.locator(".modal-backdrop")).toHaveCount(0);
   });
+
+  test("initials coach is interactive: type into the real field, Enter submits and dismisses", async ({
+    page,
+  }) => {
+    await resetLists(page);
+    await seedList(page, "Existing"); // populated -> no first-list gate to distract
+    await page.goto("/");
+
+    // The coach spotlights the real initials field, which holds focus under it.
+    await expect(page.locator(".coach-overlay")).toBeVisible();
+    const input = page.locator(".modal__input");
+    await expect(input).toBeFocused();
+
+    // Type into the REAL field (no proxy) with the coach still up, then submit
+    // with Enter — the form's submit tears the coach down in the same motion.
+    await input.fill("BJ");
+    await expect(page.locator(".coach-overlay")).toBeVisible(); // still up while typing
+    await input.press("Enter");
+
+    await expect(page.locator(".coach-overlay")).toHaveCount(0);
+    await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+    await expect(page.locator(".lists__heading")).toBeVisible();
+  });
 });
