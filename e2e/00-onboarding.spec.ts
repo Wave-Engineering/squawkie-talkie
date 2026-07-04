@@ -114,6 +114,18 @@ test.describe("Onboarding: initials welcome + empty-system first-list gate", () 
   }) => {
     await resetLists(page);
     await seedList(page, "Existing"); // populated -> no first-list gate to distract
+    // Suppress the sibling surfaces' tours so ONLY the initials coach is in play.
+    // Without this, submitting initials navigates to the populated lists page, whose
+    // lists tour auto-fires the same tick and races the "coach dismissed" assertion
+    // below (the lists overlay, not the initials one, is what intermittently lingers).
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("st.coach.lists", "1");
+        localStorage.setItem("st.coach.detail", "1");
+      } catch {
+        /* localStorage unavailable — not this spec's concern */
+      }
+    });
     await page.goto("/");
 
     // The coach spotlights the real initials field, which holds focus under it.
