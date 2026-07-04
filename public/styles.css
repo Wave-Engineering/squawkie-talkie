@@ -652,6 +652,54 @@ body {
   box-shadow: 0 -1px 0 rgba(192, 38, 211, 0.15);
 }
 
+/* --- Lists page: vi-mode nav focus + mode bar (cyan variant) --- */
+
+.list-row--nav-focus {
+  animation: nav-throb 2.5s ease-in-out infinite;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+
+.lists__mode-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: var(--space-1) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+  background: var(--surface);
+  border-top: 1px solid rgba(0, 229, 255, 0.3);
+  box-shadow: 0 -1px 0 rgba(0, 229, 255, 0.15);
+}
+
+.lists__help-hint {
+  position: fixed;
+  bottom: calc(var(--space-4) + 1.75rem);
+  right: var(--space-4);
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  color: var(--text-faint);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+  z-index: 5;
+}
+.lists__help-hint:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
 /* Keymap overlay */
 .keymap-overlay {
   position: fixed;
