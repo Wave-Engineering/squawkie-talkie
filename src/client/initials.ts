@@ -141,6 +141,9 @@ function promptForInitials(): Promise<string> {
         target: () => input,
         body: INITIALS_COACH_COPY,
         placement: "bottom",
+        // The real field stays live under the coach: type your tag and hit
+        // Enter to submit (the form's submit handler tears the tour down).
+        interactive: true,
       },
     ]);
   });

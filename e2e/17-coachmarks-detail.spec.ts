@@ -11,7 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const DETAIL_FLAG = "st.coach.detail";
-const ENTRY_COPY = "Top box is always empty";
+const ENTRY_COPY = "Now you're cooking";
 const STATE_COPY = "Open, retired, or recorded";
 
 interface List {
@@ -94,14 +94,14 @@ test.describe("Detail-page coaching (progressive)", () => {
     await page.goto(`/#/list/${id}`);
 
     await expect(page.locator(".coach-overlay")).toBeVisible();
-    // Entry box + three squawk-level steps, all reachable immediately.
-    await expect(page.locator(".coach-callout__counter")).toHaveText("1 / 4");
+    // Entry box + five squawk-level steps, all reachable immediately.
+    await expect(page.locator(".coach-callout__counter")).toHaveText("1 / 6");
     await expect(page.locator(".coach-callout__body")).toContainText(ENTRY_COPY);
     await expect(page.locator("[data-squawk-id]")).toHaveCount(1);
 
     // Advancing lands on the state step, spotlighting the existing row.
     await page.keyboard.press("Enter");
-    await expect(page.locator(".coach-callout__counter")).toHaveText("2 / 4");
+    await expect(page.locator(".coach-callout__counter")).toHaveText("2 / 6");
     await expect(page.locator(".coach-callout__body")).toContainText(STATE_COPY);
   });
 
@@ -127,8 +127,44 @@ test.describe("Detail-page coaching (progressive)", () => {
 
     // The deferred squawk-level tour now fires against that real row.
     await expect(page.locator(".coach-overlay")).toBeVisible();
-    await expect(page.locator(".coach-callout__counter")).toHaveText("1 / 3");
+    await expect(page.locator(".coach-callout__counter")).toHaveText("1 / 5");
     await expect(page.locator(".coach-callout__body")).toContainText(STATE_COPY);
+  });
+
+  test("split steps: undo, hover, metrics, and realtime each get their own mark", async ({
+    page,
+    baseURL,
+  }) => {
+    await seedInitials(page, baseURL!);
+    const id = await seedList(page, "CoachSplit");
+    await page.request.post(`/api/lists/${id}/squawks`, {
+      data: { text: "pre-existing", initials: "TM" },
+    });
+
+    await page.goto(`/#/list/${id}`);
+
+    const body = page.locator(".coach-callout__body");
+    const counter = page.locator(".coach-callout__counter");
+
+    // entry -> state -> undo -> hover -> metrics -> realtime (six steps).
+    await expect(counter).toHaveText("1 / 6");
+    await expect(body).toContainText(ENTRY_COPY);
+    await page.keyboard.press("Enter");
+    await expect(counter).toHaveText("2 / 6");
+    await expect(body).toContainText(STATE_COPY);
+    await page.keyboard.press("Enter");
+    await expect(counter).toHaveText("3 / 6"); // undo — its own mark
+    await expect(body).toContainText("takes it back");
+    await expect(body).toContainText("30 seconds");
+    await page.keyboard.press("Enter");
+    await expect(counter).toHaveText("4 / 6"); // hover — its own mark
+    await expect(body).toContainText("Hover any squawk");
+    await page.keyboard.press("Enter");
+    await expect(counter).toHaveText("5 / 6"); // metrics — labels O/R/E
+    await expect(body).toContainText("Open · Retired · rEcorded");
+    await page.keyboard.press("Enter");
+    await expect(counter).toHaveText("6 / 6"); // realtime — its own mark
+    await expect(body).toContainText("Everybody sees this live");
   });
 
   test("seen-flag preset suppresses the tour; ? replays it", async ({

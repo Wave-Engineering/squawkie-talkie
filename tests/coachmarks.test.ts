@@ -203,3 +203,25 @@ test("a second start while a tour is live is a no-op", () => {
   // Only one overlay is ever on screen.
   expect(document.querySelectorAll(".coach-overlay")).toHaveLength(1);
 });
+
+// --- interactive step --------------------------------------------------------
+
+test("an interactive step focuses its target and does not swallow Enter", () => {
+  const input = document.createElement("input");
+  input.id = "field";
+  document.body.append(input);
+
+  runTour("lists", [{ target: "#field", body: "type here", interactive: true }]);
+  expect(document.querySelector(".coach-overlay")).not.toBeNull();
+  // The engine hands focus to the real target so the user can type into it.
+  expect(document.activeElement).toBe(input);
+
+  // Enter is NOT consumed to advance the tour (the target/form owns it): the
+  // single interactive step stays on screen rather than ending on Enter.
+  press("Enter");
+  expect(document.querySelector(".coach-overlay")).not.toBeNull();
+
+  // Escape still dismisses.
+  press("Escape");
+  expect(document.querySelector(".coach-overlay")).toBeNull();
+});

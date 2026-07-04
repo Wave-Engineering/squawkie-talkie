@@ -118,6 +118,7 @@ test.describe("Lists-page onboarding coach (populated-only)", () => {
     await page.keyboard.press("Enter");
     await expect(counter).toHaveText("2 / 4");
     await expect(body).toContainText("Two modes");
+    await expect(body).toContainText("Esc"); // names the real switch keys
     await expectSpotlightOn(page, ".lists__mode-bar");
 
     // Step 3 — the `?` help hint.
@@ -130,6 +131,7 @@ test.describe("Lists-page onboarding coach (populated-only)", () => {
     await page.keyboard.press("Enter");
     await expect(counter).toHaveText("4 / 4");
     await expect(body).toContainText("Stay on the keys");
+    await expect(body).toContainText("disk access"); // BJ's house line
     await expect(body).toContainText("dd");
     await expect(body).toContainText("yy");
     await expectSpotlightOn(page, ".list-row");

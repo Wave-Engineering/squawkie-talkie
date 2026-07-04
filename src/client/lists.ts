@@ -521,7 +521,7 @@ export function renderLists(container: HTMLElement): void {
       {
         target: ".lists__mode-bar",
         title: "Two modes",
-        body: "Two modes, like your editor: INSERT (typing) and NAV (flying through rows). The bar always tells you which. Yes, this is vim energy — no apologies.",
+        body: "Two modes, like your editor: INSERT (typing) and NAV (flying rows). `Esc` jumps to the box; `j`/`↓` dives into the rows. The bar always tells you which — vim energy, no apologies.",
         placement: "top",
       },
       {
@@ -533,7 +533,7 @@ export function renderLists(container: HTMLElement): void {
       {
         target: () => rows.querySelector(".list-row"),
         title: "Fly through your lists",
-        body: "`j`/`k` to move, `Enter` to open, `dd` to delete (two-step), `yy` to export. Reaching for the mouse is a round-trip to spinning rust — death to efficiency. Stay on the keys.",
+        body: "`j`/`k` to move, `Enter` to open, `dd` to delete (two-step), `yy` to export. The mouse is like disk access — death to efficiency. Stay on the keys.",
         placement: "auto",
       },
     ];

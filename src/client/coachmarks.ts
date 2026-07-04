@@ -38,6 +38,13 @@ export interface CoachStep {
   body: string;
   /** Preferred side; defaults to `auto`. */
   placement?: CoachPlacement;
+  /**
+   * When true, the spotlit target stays interactive: the engine focuses it on
+   * show and does NOT swallow `Enter`/`ArrowRight`, so the user can type into
+   * and submit the real target with the coach still up (e.g. the initials
+   * field, whose form submit tears the tour down). `Escape` still dismisses.
+   */
+  interactive?: boolean;
 }
 
 /** Optional hooks for a tour run. */
@@ -198,6 +205,16 @@ function startTour(
     positionSpotlight(spotlight, el);
     paintCallout(callout, step, index + 1, steps.length);
     positionCallout(callout, el, step.placement ?? "auto");
+
+    // Interactive steps hand focus to the real target so the user can type
+    // into / submit it with the coach still on screen.
+    if (step.interactive && el instanceof HTMLElement) {
+      try {
+        el.focus();
+      } catch {
+        /* element became unfocusable; nothing to do */
+      }
+    }
   }
 
   function next(): void {
@@ -226,7 +243,10 @@ function startTour(
   }
 
   function onKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" || event.key === "ArrowRight") {
+    // An interactive step lets its target own Enter/typing (the user is
+    // filling the real field); only Escape still dismisses the tour.
+    const interactive = steps[index]?.interactive === true;
+    if (!interactive && (event.key === "Enter" || event.key === "ArrowRight")) {
       event.preventDefault();
       event.stopPropagation();
       next();
