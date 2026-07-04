@@ -140,6 +140,25 @@ export function renderLists(container: HTMLElement): void {
     }
     rowEl.remove();
     syncEmpty();
+    if (index >= 0) {
+      adjustFocusAfterRemoval(index);
+    }
+  }
+
+  function adjustFocusAfterRemoval(removedIndex: number): void {
+    if (focusedIndex < 0) return;
+    if (removedIndex < focusedIndex) {
+      focusedIndex--;
+    } else if (removedIndex === focusedIndex) {
+      const rowEls = getRowEls();
+      if (rowEls.length === 0) {
+        exitToInput();
+      } else if (focusedIndex >= model.length) {
+        setNavFocus(model.length - 1);
+      } else {
+        setNavFocus(focusedIndex);
+      }
+    }
   }
 
   // --- new-list form -------------------------------------------------------
@@ -287,6 +306,225 @@ export function renderLists(container: HTMLElement): void {
     return row;
   }
 
+  // --- Keyboard navigation (vim-style, matching detail view) ---------------
+
+  type Mode = "insert" | "nav";
+  let mode: Mode = "insert";
+  let focusedIndex: number = -1;
+  let chordPending: string | null = null;
+  let chordTimer: ReturnType<typeof setTimeout> | null = null;
+  let overlayEl: HTMLElement | null = null;
+
+  const formInput = container.querySelector<HTMLInputElement>(".lists__new-input")!;
+
+  function clearChord(): void {
+    chordPending = null;
+    if (chordTimer !== null) {
+      clearTimeout(chordTimer);
+      chordTimer = null;
+    }
+  }
+
+  function getRowEls(): HTMLElement[] {
+    return Array.from(rows.querySelectorAll<HTMLElement>(".list-row"));
+  }
+
+  function setNavFocus(index: number): void {
+    const rowEls = getRowEls();
+    if (focusedIndex >= 0 && focusedIndex < rowEls.length) {
+      rowEls[focusedIndex]!.classList.remove("list-row--nav-focus");
+    }
+    focusedIndex = index;
+    if (index >= 0 && index < rowEls.length) {
+      const el = rowEls[index]!;
+      el.setAttribute("tabindex", "-1");
+      el.classList.add("list-row--nav-focus");
+      el.focus();
+      el.scrollIntoView({ block: "nearest" });
+    }
+    updateModeBar();
+  }
+
+  function enterNavMode(): void {
+    const rowEls = getRowEls();
+    if (rowEls.length === 0) return;
+    mode = "nav";
+    formInput.blur();
+    setNavFocus(focusedIndex >= 0 ? focusedIndex : 0);
+  }
+
+  function exitToInput(): void {
+    mode = "insert";
+    clearChord();
+    if (focusedIndex >= 0) {
+      const rowEls = getRowEls();
+      if (focusedIndex < rowEls.length) {
+        rowEls[focusedIndex]!.classList.remove("list-row--nav-focus");
+      }
+    }
+    focusedIndex = -1;
+    formInput.focus();
+    updateModeBar();
+  }
+
+  function handleNavKey(event: KeyboardEvent): void {
+    const key = event.key;
+    const rowEls = getRowEls();
+
+    if (chordPending !== null) {
+      if (key === chordPending && focusedIndex >= 0 && focusedIndex < rowEls.length) {
+        event.preventDefault();
+        const list = model[focusedIndex];
+        clearChord();
+        if (key === "d" && list) {
+          const row = rowEls[focusedIndex]!;
+          const deleteBtn = row.querySelector<HTMLButtonElement>(".list-row__delete");
+          if (deleteBtn) deleteBtn.click();
+        } else if (key === "y" && list) {
+          clearError();
+          void exportList(list).catch(() =>
+            showError(`Could not export "${list.name}".`),
+          );
+        }
+        return;
+      }
+      clearChord();
+    }
+
+    if (key === "j" || key === "ArrowDown") {
+      event.preventDefault();
+      if (focusedIndex < rowEls.length - 1) {
+        setNavFocus(focusedIndex + 1);
+      }
+      return;
+    }
+    if (key === "k" || key === "ArrowUp") {
+      event.preventDefault();
+      if (focusedIndex <= 0) {
+        exitToInput();
+      } else {
+        setNavFocus(focusedIndex - 1);
+      }
+      return;
+    }
+    if (key === "Enter" && focusedIndex >= 0) {
+      event.preventDefault();
+      const list = model[focusedIndex];
+      if (list) navigate(`#/list/${list.id}`);
+      return;
+    }
+    if (key === "Escape" || key === "Home") {
+      event.preventDefault();
+      exitToInput();
+      return;
+    }
+    if (key === "?" && rowEls.length > 0) {
+      event.preventDefault();
+      showKeymapOverlay();
+      return;
+    }
+    if ((key === "d" || key === "y") && focusedIndex >= 0) {
+      event.preventDefault();
+      chordPending = key;
+      chordTimer = setTimeout(() => clearChord(), 500);
+      return;
+    }
+  }
+
+  // Input keyboard: arrow-down enters nav, ? shows help
+  formInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "j") {
+      if (event.key === "j" && formInput.value.length > 0) return;
+      event.preventDefault();
+      enterNavMode();
+      return;
+    }
+    if (event.key === "?" && formInput.value.length === 0) {
+      event.preventDefault();
+      showKeymapOverlay();
+      return;
+    }
+  });
+
+  // Nav keydown on the rows list (capture phase). This listener is on the
+  // persistent <ul>, not a per-row node, so it is torn down only when the
+  // router calls container.replaceChildren() on unmount — not by paint().
+  rows.addEventListener("keydown", (event) => {
+    if (overlayEl) return;
+    if (mode === "nav") handleNavKey(event);
+  }, true);
+
+  // Focus tracking for the mode bar. Also clears any lingering nav-focus when
+  // the input is (re-)focused — e.g. clicked while a row is highlighted — so the
+  // caret and the mode bar never disagree about where focus is.
+  formInput.addEventListener("focus", () => {
+    mode = "insert";
+    clearChord();
+    if (focusedIndex >= 0) {
+      getRowEls()[focusedIndex]?.classList.remove("list-row--nav-focus");
+      focusedIndex = -1;
+    }
+    updateModeBar();
+  });
+
+  // --- Mode bar (cyan variant for lists page) ---
+  const modeBar = document.createElement("div");
+  modeBar.className = "lists__mode-bar";
+  modeBar.textContent = "-- INSERT --";
+
+  function updateModeBar(): void {
+    if (mode === "insert") {
+      modeBar.textContent = "-- INSERT --";
+      modeBar.dataset.mode = "insert";
+    } else {
+      modeBar.textContent = "-- NAV --";
+      modeBar.dataset.mode = "nav";
+    }
+  }
+
+  // --- Keymap overlay ---
+  function showKeymapOverlay(): void {
+    if (overlayEl) return;
+    overlayEl = document.createElement("div");
+    overlayEl.className = "keymap-overlay";
+    overlayEl.innerHTML = `
+      <div class="keymap-overlay__content">
+        <h3 class="keymap-overlay__title">Keyboard shortcuts</h3>
+        <table class="keymap-overlay__table">
+          <tr><td><kbd>j</kbd> / <kbd>↓</kbd></td><td>Move down</td></tr>
+          <tr><td><kbd>k</kbd> / <kbd>↑</kbd></td><td>Move up</td></tr>
+          <tr><td><kbd>Enter</kbd></td><td>Open list</td></tr>
+          <tr><td><kbd>dd</kbd></td><td>Delete list</td></tr>
+          <tr><td><kbd>yy</kbd></td><td>Export list</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Back to input</td></tr>
+          <tr><td><kbd>Home</kbd></td><td>Back to input</td></tr>
+          <tr><td><kbd>?</kbd></td><td>This help</td></tr>
+        </table>
+        <p class="keymap-overlay__dismiss">Press any key or click to dismiss</p>
+      </div>`;
+    container.append(overlayEl);
+
+    function dismiss(): void {
+      overlayEl?.remove();
+      overlayEl = null;
+      document.removeEventListener("keydown", dismiss);
+      document.removeEventListener("click", dismiss);
+    }
+    setTimeout(() => {
+      document.addEventListener("keydown", dismiss, { once: true });
+      document.addEventListener("click", dismiss, { once: true });
+    }, 0);
+  }
+
+  // Help hint in the corner
+  const helpHint = document.createElement("span");
+  helpHint.className = "lists__help-hint mono";
+  helpHint.textContent = "?";
+  helpHint.title = "Keyboard shortcuts";
+  helpHint.addEventListener("click", showKeymapOverlay);
+
+  container.append(helpHint, modeBar);
+
   // --- realtime seam (#9) --------------------------------------------------
   // Register this mount as the active realtime sink: a list created or deleted
   // by another viewer is applied live to these same rows. Both ops are
@@ -314,4 +552,9 @@ export function renderLists(container: HTMLElement): void {
     .catch(() => {
       showError("Could not load lists.");
     });
+
+  // Land the caret in the entry box on mount (mirrors detail.ts's entry focus),
+  // so the mode bar's INSERT state is real and the ArrowDown/j entry gestures
+  // are live immediately — not dead keys until the user clicks the input.
+  formInput.focus();
 }
