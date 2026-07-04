@@ -32,6 +32,12 @@ import {
   updateSquawk,
   type ListDetail,
 } from "./api.ts";
+import {
+  hasSeen,
+  replayTour,
+  runTour,
+  type CoachStep,
+} from "./coachmarks.ts";
 import { ensureInitials } from "./initials.ts";
 import { setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
@@ -50,6 +56,59 @@ const SETTLE_IN_MS = 30_000;
 
 /** Chord timeout: how long to wait for the second key in dd/yy. */
 const CHORD_TIMEOUT_MS = 500;
+
+// ---------------------------------------------------------------------------
+// First-run coaching (Epic #69, Story #73) — consumes the engine (#70).
+//
+// The detail page coaches progressively: the always-empty entry box is coached
+// on first visit even when the list is empty; the squawk-level teachables (the
+// state <select>, the (O│R│E) counts, dd/yy/undo/hover) are only meaningful
+// once a real squawk row exists, so they are shown immediately when the list
+// already has one, or deferred until the user (or a teammate, via SSE) brings
+// the first one into existence. The tour never creates or writes a squawk.
+// ---------------------------------------------------------------------------
+
+/** localStorage surface key for the detail page's coach tour. */
+const COACH_SURFACE = "detail";
+
+/** Always-available step: the perpetually-empty entry box. */
+const COACH_ENTRY_STEP: CoachStep = {
+  target: ".squawk-row--new .squawk-row__text",
+  placement: "bottom",
+  body:
+    "Top box is always empty, always waiting. Type, hit Enter, you're on the " +
+    "next line. It autosaves — quit babysitting it.",
+};
+
+/**
+ * Squawk-level steps, resolved fresh against `stack` so they anchor to whatever
+ * the first real row is at display time — the user's own after a create, or a
+ * teammate's when the list arrives populated.
+ */
+function coachSquawkSteps(stack: HTMLElement): CoachStep[] {
+  return [
+    {
+      target: () => stack.querySelector("[data-squawk-id] .squawk-row__state"),
+      placement: "left",
+      body:
+        "Open, retired, or recorded. Flip it with `dd`/`yy` from home row. Or " +
+        "reach for the mouse — I'll grab you a juice box and animal crackers " +
+        "while you do. I'll certainly have the time.",
+    },
+    {
+      target: () =>
+        stack.querySelector("[data-squawk-id] .squawk-row__recorder"),
+      placement: "left",
+      body:
+        "`u` undoes; hover a squawk to see who flagged it — no clicking required.",
+    },
+    {
+      target: ".detail__counts",
+      placement: "bottom",
+      body: "Everybody sees this live. No locks, last edit wins. Play nice.",
+    },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Pure helpers (unit tested in tests/detail.test.ts)
@@ -203,6 +262,10 @@ export async function renderList(
 
   // Undo buffer: last locally-created squawk
   let undoBuffer: { id: number; text: string } | null = null;
+
+  // First-run coaching: armed only when the entry-box tour ran on an empty
+  // list, so the squawk-level steps fire once against the first real row.
+  let coachSquawksPending = false;
 
   // Autosave timer state for edit mode
   let editTimerHandle: ReturnType<typeof setTimeout> | null = null;
@@ -563,6 +626,7 @@ export async function renderList(
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
     updateCounts();
+    coachSquawksIfPending();
   }
 
   function patchSquawk(squawk: Squawk, applyToInput: boolean): void {
@@ -599,11 +663,14 @@ export async function renderList(
       return;
     }
     if (event.key === "?") {
-      // Only trigger help if input is empty
+      // From the entry box, `?` replays the surface's coaching (Epic #69).
+      // The keymap cheat-sheet stays reachable from a focused squawk row and
+      // the corner hint. Only when the box is empty, so a literal "?" can be
+      // typed into a squawk.
       if (newRow.input.value.length === 0) {
         event.preventDefault();
         event.stopPropagation();
-        showKeymapOverlay();
+        replayCoach();
         return;
       }
     }
@@ -682,6 +749,42 @@ export async function renderList(
     patchSquawk,
     removeSquawk: (sqId) => removeSquawkRow(sqId),
   });
+
+  // --- First-run coaching (Epic #69, Story #73) ---
+  function hasSquawkRow(): boolean {
+    return stack.querySelector("[data-squawk-id]") !== null;
+  }
+
+  /** The full applicable tour: entry box always, squawk steps once a row exists. */
+  function coachSteps(): CoachStep[] {
+    return hasSquawkRow()
+      ? [COACH_ENTRY_STEP, ...coachSquawkSteps(stack)]
+      : [COACH_ENTRY_STEP];
+  }
+
+  /** Replay the applicable tour regardless of the seen-flag (the `?` affordance). */
+  function replayCoach(): void {
+    replayTour(COACH_SURFACE, coachSteps());
+  }
+
+  /** Fire the deferred squawk-level steps once, when the first row appears. */
+  function coachSquawksIfPending(): void {
+    if (!coachSquawksPending || !hasSquawkRow()) return;
+    coachSquawksPending = false;
+    replayTour(COACH_SURFACE, coachSquawkSteps(stack));
+  }
+
+  // Auto-run once per browser. A populated list coaches the entry box and the
+  // first real row together; an empty list coaches only the entry box now and
+  // arms the squawk-level steps for the first row the user brings into being.
+  if (!hasSeen(COACH_SURFACE)) {
+    if (hasSquawkRow()) {
+      runTour(COACH_SURFACE, [COACH_ENTRY_STEP, ...coachSquawkSteps(stack)]);
+    } else {
+      coachSquawksPending = true;
+      runTour(COACH_SURFACE, [COACH_ENTRY_STEP]);
+    }
+  }
 }
 
 /** Build the always-empty new-squawk row (row 0). */
