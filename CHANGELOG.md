@@ -1,18 +1,44 @@
 # Changelog
 
 All notable changes to Squawkie-Talkie. Format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project is pre-1.0, so
-versions below are logical milestones (Phase 1 → tech-debt → Phase 2), not git tags.
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Entries `0.1.0`–`0.2.0` were
+pre-tag logical milestones (Phase 1 → tech-debt → Phase 2); **git-tagged releases begin
+at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-04 — First tagged release
+
 ### Added
-- `GET /api/lists/by-name?name=<name>` — look up a list (with its squawks) by exact name
-  (oldest match when names duplicate; `400` if `name` missing, `404` if none).
+- **Vi-mode keyboard navigation** — `j`/`k` (and `↑`/`↓`) movement, `Enter` to open,
+  `dd`/`yy` chords, an INSERT/NAV mode bar, and a `?` keymap overlay — on both the squawk
+  editor (#51) and the lists screen (#62).
+- **Auto-open** a newly created list straight into its editor, with a mode-indicator
+  footer bar (#60).
+- **Docker support** — `Dockerfile`, `docker-compose.yml`, `.dockerignore`, and a CI
+  docker smoke-test job; run the whole app with `docker compose up` (#54).
+- **Quick-add a squawk by list name** — `POST /api/squawks` with
+  `{ list_name, text, initials }` (#49).
+- **Look up a list by exact name** — `GET /api/lists/by-name?name=<name>` (oldest match
+  when names duplicate; `400` if `name` missing, `404` if none) (#47).
+- **Playwright end-to-end suite** — multi-viewer realtime, keyboard nav, chords, export,
+  and recovery flows (#52).
+- Top-level launcher script (`squawk-to-me-goose`) (#58).
 
 ### Docs
+- **Container deployment** — README quick-start plus a `docs/deployment.md` section
+  (image shape, persistence via named volume, backup, ports, reverse proxy, security),
+  every command verified against the built image (#54).
 - Project documentation backfill: `README`, `AGENTS.md`, `CHANGELOG`, and
-  `docs/{architecture,requirements,deployment,testing}.md`.
+  `docs/{architecture,requirements,deployment,testing}.md` (#45).
+
+### Fixed
+- Eliminate an SSE subscription race that made the multi-viewer realtime e2e test flaky
+  on CI (the test mutated before the second viewer's detail view had mounted) (#66).
+
+### Internal
+- Refresh the `.claude-project.md` toolchain/CI cache, which had gone stale (reported no
+  CI and no toolchain despite both existing) (#64).
 
 ## [0.2.0] — 2026-06-28 — Phase 2 (UX completeness & polish)
 
