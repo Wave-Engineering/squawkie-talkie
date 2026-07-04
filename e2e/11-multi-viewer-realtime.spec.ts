@@ -1,4 +1,21 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type BrowserContext } from "@playwright/test";
+
+/**
+ * These viewers are *returning* users: the first-run onboarding coach marks
+ * (Epic #69) are already seen, so no tour auto-fires and swallows the keyboard
+ * gestures / realtime interactions this suite exercises.
+ */
+async function markCoachSeen(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => {
+    try {
+      localStorage.setItem("st.coach.initials", "1");
+      localStorage.setItem("st.coach.lists", "1");
+      localStorage.setItem("st.coach.detail", "1");
+    } catch {
+      /* localStorage unavailable — ignore */
+    }
+  });
+}
 
 test.describe("Multi-viewer realtime", () => {
   test("squawk created by viewer A appears live in viewer B", async ({
@@ -9,6 +26,8 @@ test.describe("Multi-viewer realtime", () => {
     const ctxB = await browser.newContext();
     await ctxA.addCookies([{ name: "st_initials", value: "AA", url: baseURL! }]);
     await ctxB.addCookies([{ name: "st_initials", value: "BB", url: baseURL! }]);
+    await markCoachSeen(ctxA);
+    await markCoachSeen(ctxB);
 
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
@@ -53,6 +72,8 @@ test.describe("Multi-viewer realtime", () => {
     const ctxB = await browser.newContext();
     await ctxA.addCookies([{ name: "st_initials", value: "AA", url: baseURL! }]);
     await ctxB.addCookies([{ name: "st_initials", value: "BB", url: baseURL! }]);
+    await markCoachSeen(ctxA);
+    await markCoachSeen(ctxB);
 
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();
@@ -90,6 +111,8 @@ test.describe("Multi-viewer realtime", () => {
     const ctxB = await browser.newContext();
     await ctxA.addCookies([{ name: "st_initials", value: "AA", url: baseURL! }]);
     await ctxB.addCookies([{ name: "st_initials", value: "BB", url: baseURL! }]);
+    await markCoachSeen(ctxA);
+    await markCoachSeen(ctxB);
 
     const pageA = await ctxA.newPage();
     const pageB = await ctxB.newPage();

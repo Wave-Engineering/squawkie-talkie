@@ -389,6 +389,44 @@ body {
   cursor: not-allowed;
 }
 
+/* Welcome / ConOps copy on the first-run initials gate (#71) */
+.modal__welcome {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: rgba(230, 237, 243, 0.82);
+}
+
+/* Empty-system first-list gate (#71). Reuses the .modal card + .modal__title /
+   .modal__hint / .modal__button styles; only the backdrop and the free-text
+   name input are bespoke (the initials .modal__input is uppercase/spaced). */
+.first-list-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(5, 6, 10, 0.72);
+}
+
+.first-list-gate__input {
+  padding: var(--space-3);
+  font: inherit;
+  font-size: 1.05rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid rgba(230, 237, 243, 0.15);
+  border-radius: var(--radius);
+}
+
+.first-list-gate__error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #ff6b6b;
+}
+
 /* Lists screen (#7) — extends the tokens above, no new colors */
 .lists__heading {
   margin: 0;
@@ -756,8 +794,29 @@ body {
   border-radius: 4px;
 }
 
-.keymap-overlay__dismiss {
+/* Replay-the-tour affordance inside the `?` overlay (#72). */
+.keymap-overlay__replay {
+  display: block;
+  width: 100%;
   margin: var(--space-4) 0 0;
+  padding: 0.5rem 0.9rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  color: var(--accent);
+  background: var(--bg);
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.keymap-overlay__replay:hover {
+  background: var(--surface-2);
+}
+
+.keymap-overlay__dismiss {
+  margin: var(--space-3) 0 0;
   font-size: 0.8rem;
   color: var(--text-faint);
   text-align: center;
