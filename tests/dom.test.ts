@@ -60,10 +60,13 @@ function press(el: HTMLElement, key: string): void {
 beforeEach(() => {
   document.body.replaceChildren();
   document.cookie = "st_initials=QA"; // skip the initials prompt
-  // Returning user: the first-run coach tour (Epic #69, #73) is already seen,
-  // so it never auto-fires and captures keys during these behavioural tests.
+  // Returning user: the first-run coach tours (Epic #69, #72/#73) are already
+  // seen, so no tour auto-fires and captures keys during these behavioural
+  // tests. The dedicated lists-tour test below opts back out by clearing its
+  // flag.
   try {
     localStorage.setItem("st.coach.detail", "1");
+    localStorage.setItem("st.coach.lists", "1");
   } catch {
     /* no localStorage in this environment — ignore */
   }
@@ -490,4 +493,62 @@ test("each list row has an Export button that downloads the list as JSON", async
     urlApi.revokeObjectURL = origRevoke;
     HTMLAnchorElement.prototype.click = origClick;
   }
+});
+
+// --- Onboarding coach tour (Epic #69, #72): seen-flag gate ------------------
+
+/** Stub fetch so `GET /api/lists` returns the given rows (default: one list). */
+function stubLists(lists = [{ id: 7, name: "Sprint 7", created_at: "t" }]): void {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify(lists), {
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+}
+
+test("lists tour fires once on the first populated visit, then the seen-flag suppresses it", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  // Opt out of the beforeEach preset so this mount is a genuine first visit.
+  localStorage.removeItem("st.coach.lists");
+  stubLists();
+
+  const c1 = document.createElement("div");
+  document.body.append(c1);
+  renderLists(c1);
+  await new Promise((r) => setTimeout(r, 0)); // getLists() resolves -> rows + tour
+
+  // The spotlight tour auto-fired against the populated page.
+  expect(document.querySelector(".coach-overlay")).not.toBeNull();
+  // Not yet recorded — the engine marks seen only on end.
+  expect(localStorage.getItem("st.coach.lists")).toBeNull();
+
+  // Esc ends the tour (engine's capture-phase listener is on `document`): the
+  // overlay is torn down and the seen-flag is written.
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }),
+  );
+  expect(document.querySelector(".coach-overlay")).toBeNull();
+  expect(localStorage.getItem("st.coach.lists")).not.toBeNull();
+
+  // A second mount is suppressed by the now-set flag.
+  const c2 = document.createElement("div");
+  document.body.append(c2);
+  renderLists(c2);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(document.querySelector(".coach-overlay")).toBeNull();
+});
+
+test("lists tour does not auto-fire on a zero-row board (no empty-state variant)", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  localStorage.removeItem("st.coach.lists");
+  stubLists([]); // empty system
+
+  const c = document.createElement("div");
+  document.body.append(c);
+  renderLists(c);
+  await new Promise((r) => setTimeout(r, 0)); // getLists() resolves -> zero rows
+
+  // Populated-only (AC#3): nothing spotlit, and the flag is untouched so a later
+  // populated visit still coaches.
+  expect(document.querySelector(".coach-overlay")).toBeNull();
+  expect(localStorage.getItem("st.coach.lists")).toBeNull();
 });

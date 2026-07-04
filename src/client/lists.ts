@@ -13,6 +13,12 @@
  */
 import type { List } from "../server/types.ts";
 import { createList, deleteList, getList, getLists } from "./api.ts";
+import {
+  type CoachStep,
+  endActiveTour,
+  replayTour,
+  runTour,
+} from "./coachmarks.ts";
 import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
 
@@ -482,6 +488,57 @@ export function renderLists(container: HTMLElement): void {
     }
   }
 
+  // --- Coach-mark tour (onboarding spotlight; #72) ---
+  // Populated-only by design: #71's first-list gate guarantees ≥1 real list on
+  // a genuine first run, so the lists page is never empty on first visit and the
+  // tour anchors the create input, the mode bar, `?`, and the user's first real
+  // row. There is deliberately no empty-state variant (AC#3) — it would be
+  // unreachable. The row step's resolver is defensive, so if a user later
+  // deletes every list and replays via `?`, that step is skipped, never spotlit
+  // over nothing.
+  const SURFACE = "lists";
+
+  // A tour must never outlive this view. When the router navigates away — into a
+  // list the viewer opens or the one #60 auto-opens on create — end any live
+  // tour so its dim + capture-phase key handler do not linger on the detail page
+  // and swallow its `Enter`/`Escape` (would regress the nav e2e suite). The
+  // listener is self-removing, so each mount contributes exactly one, cleared on
+  // the first navigation away.
+  function endTourOnLeave(): void {
+    endActiveTour();
+    window.removeEventListener("hashchange", endTourOnLeave);
+  }
+  window.addEventListener("hashchange", endTourOnLeave);
+
+  function buildTourSteps(): CoachStep[] {
+    return [
+      {
+        target: ".lists__new-input",
+        title: "Create a list",
+        body: "Name it, hit Enter. Done.",
+        placement: "bottom",
+      },
+      {
+        target: ".lists__mode-bar",
+        title: "Two modes",
+        body: "Two modes, like your editor: INSERT (typing) and NAV (flying through rows). The bar always tells you which. Yes, this is vim energy — no apologies.",
+        placement: "top",
+      },
+      {
+        target: ".lists__help-hint",
+        title: "Your cheat sheet",
+        body: "Your cheat sheet, one keystroke away. Learn five keys and outrun every mouse-clicker in the building.",
+        placement: "auto",
+      },
+      {
+        target: () => rows.querySelector(".list-row"),
+        title: "Fly through your lists",
+        body: "`j`/`k` to move, `Enter` to open, `dd` to delete (two-step), `yy` to export. Reaching for the mouse is a round-trip to spinning rust — death to efficiency. Stay on the keys.",
+        placement: "auto",
+      },
+    ];
+  }
+
   // --- Keymap overlay ---
   function showKeymapOverlay(): void {
     if (overlayEl) return;
@@ -500,6 +557,7 @@ export function renderLists(container: HTMLElement): void {
           <tr><td><kbd>Home</kbd></td><td>Back to input</td></tr>
           <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         </table>
+        <button type="button" class="keymap-overlay__replay">Replay the tour ▸</button>
         <p class="keymap-overlay__dismiss">Press any key or click to dismiss</p>
       </div>`;
     container.append(overlayEl);
@@ -510,6 +568,19 @@ export function renderLists(container: HTMLElement): void {
       document.removeEventListener("keydown", dismiss);
       document.removeEventListener("click", dismiss);
     }
+
+    // Replay this surface's tour from the `?` overlay (ignores the seen-flag).
+    // Stop propagation so the overlay's own dismiss-on-click does not also fire;
+    // dismiss it explicitly, then hand off to the engine.
+    const replayBtn = overlayEl.querySelector<HTMLButtonElement>(
+      ".keymap-overlay__replay",
+    );
+    replayBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      dismiss();
+      replayTour(SURFACE, buildTourSteps());
+    });
+
     setTimeout(() => {
       document.addEventListener("keydown", dismiss, { once: true });
       document.addEventListener("click", dismiss, { once: true });
@@ -548,6 +619,15 @@ export function renderLists(container: HTMLElement): void {
         addList(list);
       }
       syncEmpty();
+      // First visit to the lists page (per browser): run the onboarding tour.
+      // Guard on row presence — the tour is populated-only (AC#3), so it never
+      // auto-fires on a zero-row board (unreachable on a genuine first run via
+      // #71's gate, but possible after a user deletes every list; `?` still
+      // replays). `runTour` is a no-op once this surface has been seen, so the
+      // return trip after #60 auto-opens a freshly created list does not re-fire.
+      if (getRowEls().length > 0) {
+        runTour(SURFACE, buildTourSteps());
+      }
     })
     .catch(() => {
       showError("Could not load lists.");
