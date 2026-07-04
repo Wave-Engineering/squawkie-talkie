@@ -61,6 +61,22 @@ async function expectSpotlightOn(page: Page, selector: string): Promise<void> {
 }
 
 test.describe("Lists onboarding coach", () => {
+  // Cross-flight reconcile (wave-2, Epic #69): the shared `./fixtures.ts` `page`
+  // fixture presets every coach seen-flag so *feature* specs run as a returning
+  // user (#73). This is a *coach* spec — it must observe a first-run visitor, so
+  // it opts back out by clearing the lists seen-flag before each navigation.
+  // Registered after the fixture's init script, so this `removeItem` wins; the
+  // two suppression tests below re-`setItem` in their own body and still win.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((k) => {
+      try {
+        localStorage.removeItem(k);
+      } catch {
+        /* localStorage unavailable — the tour simply shows, which is fine here */
+      }
+    }, SEEN_KEY);
+  });
+
   test("fresh + empty: tour anchors Welcome card, input, mode bar, and ?", async ({
     seededPage: page,
   }) => {
