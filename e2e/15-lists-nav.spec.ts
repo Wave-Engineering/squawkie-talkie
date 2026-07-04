@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-import { test, expect, createList } from "./fixtures.ts";
+import { test, expect } from "./fixtures.ts";
 
 // The E2E server keeps one in-memory DB for the whole run, so lists persist
 // across tests. Wipe the slate first so row counts and ordering are
@@ -13,12 +13,15 @@ async function clearLists(page: Page): Promise<void> {
   }
 }
 
-// Creating a list auto-opens it into the detail view (#60), so seed each list
-// then return to the lists screen where the rows — and their vi-mode nav — live.
+// Seed the exact set of lists this spec navigates, through the API rather than
+// the UI. Two reasons: the UI create auto-opens the list into detail (#60), and
+// an empty instance would otherwise hit the #71 first-list gate. Seeding via the
+// API keeps the instance populated before the first navigation, so we land
+// straight on the lists screen where the rows — and their vi-mode nav — live.
 async function seedLists(page: Page, names: string[]): Promise<void> {
   await clearLists(page);
   for (const name of names) {
-    await createList(page, name);
+    await page.request.post("/api/lists", { data: { name } });
   }
   await page.goto("/");
   await expect(page.locator(".list-row")).toHaveCount(names.length);
@@ -32,7 +35,7 @@ test.describe("Vi-mode: lists-page nav", () => {
     seededPage: page,
   }) => {
     await clearLists(page);
-    await createList(page, "Alpha");
+    await page.request.post("/api/lists", { data: { name: "Alpha" } });
     await page.goto("/");
     await expect(page.locator(".list-row")).toHaveCount(1);
 
