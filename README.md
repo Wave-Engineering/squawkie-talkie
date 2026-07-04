@@ -47,6 +47,19 @@ bun test             # unit + DOM tests
 bun run build        # bundle the client → public/dist/app.js
 ```
 
+### Run in a container
+
+Prefer Docker? A `Dockerfile` and `docker-compose.yml` ship with the repo:
+
+```bash
+docker compose up --build     # → http://localhost:3000
+```
+
+The image builds the client itself (no separate `bun run build` step) and
+persists the SQLite database in a named volume, so your lists survive restarts.
+Full container notes — persistence, ports, reverse proxy — are in
+[`docs/deployment.md`](docs/deployment.md#run-in-a-container-docker).
+
 > **Production note:** run `bun run build` before serving in prod, and read
 > [`docs/deployment.md`](docs/deployment.md) first — there's one load-bearing
 > reverse-proxy setting for SSE, and a **security posture** you must understand
@@ -70,7 +83,7 @@ docs/         architecture · requirements · deployment · testing
 |---|---|
 | [`docs/architecture.md`](docs/architecture.md) | System design, data model, key decisions, **API reference**, security posture |
 | [`docs/requirements.md`](docs/requirements.md) | The testable behavioral spec |
-| [`docs/deployment.md`](docs/deployment.md) | Self-hosting: SSE/proxy, persistence, env, **security** |
+| [`docs/deployment.md`](docs/deployment.md) | Self-hosting: **Docker**/compose, SSE/proxy, persistence, env, **security** |
 | [`docs/testing.md`](docs/testing.md) | Test strategy (unit → DOM → E2E) + manual UX checklist |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release history |
 | [`AGENTS.md`](AGENTS.md) | Orientation for AI dev agents working in this repo |

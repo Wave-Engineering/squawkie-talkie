@@ -36,6 +36,71 @@ The process logs `squawkie-talkie listening on http://localhost:<port>` and hand
 > **Build step is mandatory.** The server serves `public/dist/app.js`; if you skip
 > `bun run build`, the client shell loads but the app bundle 404s.
 
+## Run in a container (Docker)
+
+A `Dockerfile` and `docker-compose.yml` ship in the repo. Unlike the bare-metal
+path above, the image runs `bun run build` **inside the build**, so there's no
+separate build step to forget — the client bundle is baked into the image.
+
+```bash
+docker compose up --build       # build the image + start the service
+# → http://localhost:3000
+```
+
+`--build` is only needed the first time (or after a code change); day-to-day it's
+just `docker compose up -d`. Stop with `docker compose down`.
+
+**What the image is** (`Dockerfile`): base `oven/bun:1.3.11-alpine` (the
+CI-pinned Bun), copies `src/` + `public/`, builds the client, and starts
+`src/server/index.ts`. The final image is ≈ **108 MB** — `.dockerignore` keeps
+`node_modules/`, tests, and `.git` out. It listens on `PORT=3000` and writes the
+DB to `SQUAWK_DB=/data/squawk.db`.
+
+### Persistence — the container gotcha
+
+`squawk.db` lives under `/data` **inside the container**, backed by the named
+volume `squawkie-data` (declared in `docker-compose.yml`). That volume *is* the
+instance — it's what makes your lists survive `docker compose down` and image
+rebuilds; the container's own filesystem is ephemeral.
+
+- `docker compose down` removes the container but **keeps** the volume — data is safe.
+- `docker compose down -v` **also deletes the volume** — every list is gone, permanently (the container-world twin of the cascade-delete warning below).
+
+Back up the database with `docker compose cp` — this addresses the service by
+name, so you don't need to know Compose's project-prefixed volume name
+(`squawkie-talkie_squawkie-data`):
+
+```bash
+docker compose cp squawkie:/data/squawk.db ./squawk-$(date +%F).db
+```
+
+For a guaranteed-consistent snapshot, quiesce writes first — SQLite's transient
+`-journal` sidecar can hold writes a live copy misses (same caveat as the
+bare-metal backup below):
+
+```bash
+docker compose stop
+docker compose cp squawkie:/data/squawk.db ./squawk-$(date +%F).db
+docker compose start
+```
+
+Prefer a plain host directory over the named volume? Swap the compose
+`volumes:` entry to a bind mount: `- ./data:/data`.
+
+### Changing the published port
+
+Edit the compose `ports` mapping — e.g. `"8080:3000"` serves the app on host
+port 8080. The container always listens on `3000` internally (`PORT` in the
+image); only the left-hand host port changes.
+
+### Reverse proxy & security still apply
+
+The [SSE buffering gotcha](#reverse-proxy--the-sse-gotcha) below is unchanged —
+point your proxy at the published host port and disable buffering for
+`/api/stream`. And the container removes **no** security constraint: there's
+still no auth, so keep it on a trusted internal network and never publish port
+3000 to the public internet.
+
 ## Reverse proxy — the SSE gotcha
 
 Realtime uses Server-Sent Events on `GET /api/stream`. Most proxies **buffer** responses
@@ -63,7 +128,7 @@ location / {
 ## Persistence & backup
 
 `squawk.db` **is** the instance — all lists and squawks live in that one file (plus
-SQLite's `-wal`/`-shm` siblings). To back up, copy the file while the process is stopped,
+SQLite's transient `-journal` sidecar during writes). To back up, copy the file while the process is stopped,
 or use `sqlite3 squawk.db ".backup '/backups/squawk-$(date +%F).db'"` for a hot backup.
 Deleting a list is permanent (cascade delete); there is no soft-delete or undo.
 
