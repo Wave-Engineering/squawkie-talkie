@@ -482,26 +482,9 @@ body {
   font-size: 0.875rem;
 }
 
-/* Welcome / empty-state card — doubles as the onboarding coach anchor (#72). */
 .lists__empty {
   margin: 0;
-  padding: var(--space-5);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent-dim);
-  border-radius: var(--radius);
-}
-.lists__empty-title {
-  margin: 0 0 var(--space-2);
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--accent);
-  letter-spacing: 0.03em;
-}
-.lists__empty-text {
-  margin: 0;
-  color: var(--text-dim);
-  line-height: 1.5;
+  color: rgba(230, 237, 243, 0.5);
 }
 
 .lists__rows {
@@ -811,29 +794,8 @@ body {
   border-radius: 4px;
 }
 
-/* Replay-the-tour affordance inside the `?` overlay (#72). */
-.keymap-overlay__replay {
-  display: block;
-  width: 100%;
-  margin: var(--space-4) 0 0;
-  padding: 0.5rem 0.9rem;
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  color: var(--accent);
-  background: var(--bg);
-  border: 1px solid var(--accent-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
-}
-.keymap-overlay__replay:hover {
-  background: var(--surface-2);
-}
-
 .keymap-overlay__dismiss {
-  margin: var(--space-3) 0 0;
+  margin: var(--space-4) 0 0;
   font-size: 0.8rem;
   color: var(--text-faint);
   text-align: center;
