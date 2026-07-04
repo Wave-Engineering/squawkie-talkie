@@ -444,11 +444,6 @@ test("the (O│R│E) counts render and update live on a state change", async ()
 test("each list row has an Export button that downloads the list as JSON", async () => {
   const { renderLists } = await import("../src/client/lists.ts");
 
-  // This test is about export, not onboarding: preset the lists-tour seen-flag
-  // so renderLists' first-visit coach tour (#72) does not fire and leave a
-  // spotlight overlay + document key listener lingering in the shared happy-dom.
-  localStorage.setItem("st.coach.lists", "1");
-
   const fetched: string[] = [];
   globalThis.fetch = ((input: RequestInfo | URL) => {
     const url = String(input);

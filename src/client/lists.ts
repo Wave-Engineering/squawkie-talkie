@@ -13,12 +13,6 @@
  */
 import type { List } from "../server/types.ts";
 import { createList, deleteList, getList, getLists } from "./api.ts";
-import {
-  type CoachStep,
-  endActiveTour,
-  replayTour,
-  runTour,
-} from "./coachmarks.ts";
 import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
 
@@ -109,19 +103,10 @@ export function renderLists(container: HTMLElement): void {
   const rows = document.createElement("ul");
   rows.className = "lists__rows";
 
-  // Welcome / empty-state card. Doubles as the onboarding coach anchor when
-  // there are zero rows (#72), while keeping the "create above" affordance.
-  const empty = document.createElement("div");
+  const empty = document.createElement("p");
   empty.className = "lists__empty";
+  empty.textContent = "No lists yet. Create the first one above.";
   empty.hidden = true;
-  const emptyTitle = document.createElement("h3");
-  emptyTitle.className = "lists__empty-title";
-  emptyTitle.textContent = "Welcome to Squawkie-Talkie";
-  const emptyText = document.createElement("p");
-  emptyText.className = "lists__empty-text";
-  emptyText.textContent =
-    "No lists yet. Name one in the box above and hit Enter to hatch your first Squawk List.";
-  empty.append(emptyTitle, emptyText);
 
   container.append(heading, buildNewListForm(), error, rows, empty);
 
@@ -497,67 +482,6 @@ export function renderLists(container: HTMLElement): void {
     }
   }
 
-  // --- Coach-mark tour (onboarding spotlight; #72) ---
-  // Build the tour fresh each run so the row step is present exactly when rows
-  // exist: an empty page anchors the Welcome card + input + mode bar + `?`; a
-  // populated page anchors input + mode bar + `?` + the first row. Resolvers are
-  // defensive — a target that has since vanished is skipped, never spotlit.
-  const SURFACE = "lists";
-
-  // A tour must never outlive this view. When the router navigates away (opening
-  // or creating a list — #60 auto-open included), end any live tour so its dim +
-  // capture-phase key handler do not linger on the next page. Self-removing so
-  // each mount contributes exactly one listener, cleared when this view unmounts.
-  function endTourOnLeave(): void {
-    endActiveTour();
-    window.removeEventListener("hashchange", endTourOnLeave);
-  }
-  window.addEventListener("hashchange", endTourOnLeave);
-
-  function buildTourSteps(): CoachStep[] {
-    const hasRows = getRowEls().length > 0;
-    const steps: CoachStep[] = [];
-
-    if (!hasRows) {
-      steps.push({
-        target: () => (empty.hidden ? null : empty),
-        title: "Welcome to the roost",
-        body: "This is where your Squawk Lists live — none yet. The box above is how you hatch the first. Squawkie-Talkie is keyboard-first; here's the ten-second tour.",
-        placement: "bottom",
-      });
-    }
-
-    steps.push({
-      target: ".lists__new-input",
-      title: "Create a list",
-      body: "Name it, hit Enter. Done.",
-      placement: "bottom",
-    });
-    steps.push({
-      target: ".lists__mode-bar",
-      title: "Two modes",
-      body: "Two modes, like your editor: INSERT (typing) and NAV (flying through rows). The bar always tells you which. Yes, this is vim energy — no apologies.",
-      placement: "top",
-    });
-    steps.push({
-      target: ".lists__help-hint",
-      title: "Your cheat sheet",
-      body: "Your cheat sheet, one keystroke away. Learn five keys and outrun every mouse-clicker in the building.",
-      placement: "auto",
-    });
-
-    if (hasRows) {
-      steps.push({
-        target: () => rows.querySelector(".list-row"),
-        title: "Fly through your lists",
-        body: "`j`/`k` to move, `Enter` to open, `dd` to delete (two-step), `yy` to export. Reaching for the mouse is a round-trip to spinning rust — death to efficiency. Stay on the keys.",
-        placement: "auto",
-      });
-    }
-
-    return steps;
-  }
-
   // --- Keymap overlay ---
   function showKeymapOverlay(): void {
     if (overlayEl) return;
@@ -576,7 +500,6 @@ export function renderLists(container: HTMLElement): void {
           <tr><td><kbd>Home</kbd></td><td>Back to input</td></tr>
           <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         </table>
-        <button type="button" class="keymap-overlay__replay">Replay the tour ▸</button>
         <p class="keymap-overlay__dismiss">Press any key or click to dismiss</p>
       </div>`;
     container.append(overlayEl);
@@ -587,19 +510,6 @@ export function renderLists(container: HTMLElement): void {
       document.removeEventListener("keydown", dismiss);
       document.removeEventListener("click", dismiss);
     }
-
-    // Replay this surface's tour from the `?` overlay (ignores the seen-flag).
-    // Stop propagation so the overlay's own dismiss-on-click does not also fire;
-    // dismiss it explicitly, then hand off to the engine.
-    const replayBtn = overlayEl.querySelector<HTMLButtonElement>(
-      ".keymap-overlay__replay",
-    );
-    replayBtn?.addEventListener("click", (event) => {
-      event.stopPropagation();
-      dismiss();
-      replayTour(SURFACE, buildTourSteps());
-    });
-
     setTimeout(() => {
       document.addEventListener("keydown", dismiss, { once: true });
       document.addEventListener("click", dismiss, { once: true });
@@ -638,11 +548,6 @@ export function renderLists(container: HTMLElement): void {
         addList(list);
       }
       syncEmpty();
-      // First visit to the lists page (per browser): run the onboarding tour.
-      // `runTour` is a no-op once this surface has been seen, so the return trip
-      // after #60 auto-opens a freshly created list does not re-fire it, and the
-      // row step is present only when rows already exist at this point.
-      runTour(SURFACE, buildTourSteps());
     })
     .catch(() => {
       showError("Could not load lists.");

@@ -111,16 +111,6 @@ export function replayTour(
 /** Is a tour currently on screen? Guards against double-starts. */
 let activeTour: (() => void) | null = null;
 
-/**
- * Immediately end whatever tour is on screen (no-op if none). A surface that is
- * unmounting calls this so its tour never outlives its anchors — e.g. the lists
- * page tearing down when the router navigates into a list. Idempotent: `end()`
- * guards against a second teardown.
- */
-export function endActiveTour(): void {
-  activeTour?.();
-}
-
 function startTour(
   surfaceKey: string,
   steps: CoachStep[],
