@@ -218,14 +218,14 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Claude Code agent runtime (per-clone, not project source)
-.claude/agent-identity.json
-.claude/.worktrees/
-.claude/status/
+.claude/
 .wtf/
 
 # Bun / Node toolchain
 node_modules/
 public/dist/
+# stray npm lockfile — this project uses bun.lock
+package-lock.json
 
 # SQLite database (squawk.db and its -wal/-shm sidecars)
 squawk.db*
