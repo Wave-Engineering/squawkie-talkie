@@ -19,9 +19,21 @@ test.describe("Multi-viewer realtime", () => {
     await pageA.click(".lists__new-button");
     await expect(pageA.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
 
-    // B navigates to the same list
+    // B navigates to the same list, then wait for B's detail view to finish
+    // mounting BEFORE A mutates. B's entry box being present means
+    // setActiveView({kind:"detail"}) has run — detail.ts appends the box and sets
+    // the active view in the same synchronous block — so B is *guaranteed* to be
+    // the active realtime sink by this point. And because B's EventSource opened
+    // at page load (app.ts connect()), a full navigation earlier, B is by now
+    // reliably SSE-subscribed as well. This barrier is load-bearing: SSE has no
+    // replay (sse.ts broadcasts only to registered subscribers), so a squawk
+    // broadcast before B is mounted+active is lost forever — the root cause of
+    // this test's CI flakiness.
     await pageB.goto("/");
     await pageB.click('.list-row__open:has-text("RealtimeSync")');
+    await expect(
+      pageB.locator(".squawk-row--new .squawk-row__text"),
+    ).toBeVisible();
 
     // A creates a squawk
     const entryA = pageA.locator(".squawk-row--new .squawk-row__text");
