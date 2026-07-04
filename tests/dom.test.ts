@@ -60,6 +60,13 @@ function press(el: HTMLElement, key: string): void {
 beforeEach(() => {
   document.body.replaceChildren();
   document.cookie = "st_initials=QA"; // skip the initials prompt
+  // Returning user: the first-run coach tour (Epic #69, #73) is already seen,
+  // so it never auto-fires and captures keys during these behavioural tests.
+  try {
+    localStorage.setItem("st.coach.detail", "1");
+  } catch {
+    /* no localStorage in this environment — ignore */
+  }
   stubFetch();
 });
 
