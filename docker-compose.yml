@@ -1,0 +1,14 @@
+services:
+  squawkie:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - squawkie-data:/data
+    environment:
+      - PORT=3000
+      - SQUAWK_DB=/data/squawk.db
+
+volumes:
+  squawkie-data:
