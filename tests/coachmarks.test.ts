@@ -225,3 +225,46 @@ test("an interactive step focuses its target and does not swallow Enter", () => 
   press("Escape");
   expect(document.querySelector(".coach-overlay")).toBeNull();
 });
+
+// --- interactive step: aria-modal a11y (#87) ---------------------------------
+
+test("an interactive step is not aria-modal, so its sibling target stays exposed (#87)", () => {
+  const input = document.createElement("input");
+  input.id = "field";
+  document.body.append(input);
+
+  runTour("lists", [{ target: "#field", body: "type", interactive: true }]);
+  const overlay = document.querySelector(".coach-overlay");
+  expect(overlay).not.toBeNull();
+  // Non-modal while interactive: a focused sibling control is not hidden from AT.
+  expect(overlay!.getAttribute("aria-modal")).toBeNull();
+  // Still a dialog — just a non-modal one.
+  expect(overlay!.getAttribute("role")).toBe("dialog");
+});
+
+test("a non-interactive step keeps the overlay aria-modal", () => {
+  addTarget("a");
+  runTour("lists", [{ target: "#a", body: "x" }]);
+  expect(
+    document.querySelector(".coach-overlay")!.getAttribute("aria-modal"),
+  ).toBe("true");
+});
+
+test("aria-modal toggles per step as the tour advances", () => {
+  const input = document.createElement("input");
+  input.id = "field";
+  document.body.append(input);
+  addTarget("b");
+
+  // Step 1 interactive (non-modal); step 2 plain (modal).
+  runTour("lists", [
+    { target: "#field", body: "type", interactive: true },
+    { target: "#b", body: "next" },
+  ]);
+  const overlay = document.querySelector(".coach-overlay")!;
+  expect(overlay.getAttribute("aria-modal")).toBeNull();
+
+  // An interactive step does not consume Enter, so advance via the Next button.
+  overlay.querySelector<HTMLElement>('[data-coach-action="next"]')!.click();
+  expect(overlay.getAttribute("aria-modal")).toBe("true");
+});

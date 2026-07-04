@@ -151,7 +151,9 @@ function startTour(
   const overlay = document.createElement("div");
   overlay.className = "coach-overlay";
   overlay.setAttribute("role", "dialog");
-  overlay.setAttribute("aria-modal", "true");
+  // `aria-modal` is set per step in render(): a modal overlay would hide an
+  // interactive step's sibling target from assistive tech (#87), so modality
+  // is toggled off for interactive steps and on for the rest.
 
   const spotlight = document.createElement("div");
   spotlight.className = "coach-spotlight";
@@ -206,14 +208,22 @@ function startTour(
     paintCallout(callout, step, index + 1, steps.length);
     positionCallout(callout, el, step.placement ?? "auto");
 
-    // Interactive steps hand focus to the real target so the user can type
-    // into / submit it with the coach still on screen.
-    if (step.interactive && el instanceof HTMLElement) {
-      try {
-        el.focus();
-      } catch {
-        /* element became unfocusable; nothing to do */
+    // An interactive step hosts a real control that lives OUTSIDE the overlay
+    // (a sibling of it), so the overlay must NOT be `aria-modal` while such a
+    // step is live — modality would hide the focused target from assistive tech
+    // (#87). Toggle modality per step, and hand focus to the target so the user
+    // can type into / submit it with the coach still on screen.
+    if (step.interactive) {
+      overlay.removeAttribute("aria-modal");
+      if (el instanceof HTMLElement) {
+        try {
+          el.focus();
+        } catch {
+          /* element became unfocusable; nothing to do */
+        }
       }
+    } else {
+      overlay.setAttribute("aria-modal", "true");
     }
   }
 
