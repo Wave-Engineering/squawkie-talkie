@@ -7,6 +7,35 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-04 — First-run onboarding coach marks
+
+### Added
+- **First-run coach marks** — a reusable, framework-free spotlight-tour engine
+  (per-surface "seen" tracking in `localStorage`, keyboard-driven, `?` to replay)
+  plus onboarding on all three screens: an initials Welcome + empty-system
+  first-list gate, a lists-page tour, and progressive detail-page coaching. Each
+  surface coaches once per browser, independently; no coach path writes the shared
+  DB or broadcasts a tutorial artifact over SSE (#77, #84).
+- **Interactive coach targets** — a coach step can host a live control: viewer
+  initials are typed into the real field with the coach still up, and `Enter`
+  submits and dismisses in one motion (#86).
+
+### Changed
+- Onboarding copy is keyboard-first and opinionated — the lists "Two modes" mark
+  names the real switch keys (`Esc` / `j` / `↓`), the row mark carries the house
+  line ("the mouse is like disk access — death to efficiency"), the detail entry
+  acknowledges the freshly-opened list, and the undo/hover and metrics/realtime
+  hints are each split into their own mark (#86).
+
+### Fixed
+- **a11y** — the coach overlay no longer hides an interactive step's target from
+  assistive tech: `aria-modal` is toggled per step, so a focused control that
+  lives outside the overlay (the initials field) stays exposed (#88).
+
+### Internal
+- `.gitignore` broadened to the whole per-clone `.claude/` agent runtime; the
+  stray `package-lock.json` is ignored (this project uses `bun.lock`) (#75).
+
 ## [0.3.0] — 2026-07-04 — First tagged release
 
 ### Added
