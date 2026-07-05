@@ -83,6 +83,24 @@ export function markSeen(surfaceKey: string): void {
   }
 }
 
+/**
+ * Clear every surface's seen-flag. Called when a new identity onboards (the
+ * initials gate), so onboarding is coherent: the whole progressive tour re-arms
+ * for whoever is now at this browser, never a stale partial subset (#93).
+ */
+export function resetSeen(): void {
+  try {
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(SEEN_PREFIX)) stale.push(k);
+    }
+    for (const k of stale) localStorage.removeItem(k);
+  } catch {
+    // localStorage unavailable — nothing to reset.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tour engine
 // ---------------------------------------------------------------------------
@@ -91,8 +109,9 @@ const SPOTLIGHT_PAD = 6; // px of breathing room around the target rect
 const CALLOUT_GAP = 12; // px between the spotlight and the callout
 
 /**
- * Show `steps` for `surfaceKey` only if it has not been seen yet. On any
- * end-state (finish or skip) the surface is marked seen.
+ * Show `steps` for `surfaceKey` only if it has not been seen yet. The surface is
+ * marked seen when the tour ends having shown at least one step — a tour whose
+ * targets are all absent shows nothing and does NOT burn the flag (#93).
  */
 export function runTour(
   surfaceKey: string,
@@ -136,9 +155,10 @@ function startTour(
   // Never stack tours; a second start is a no-op while one is live.
   if (activeTour) return;
 
-  // Empty tour: nothing to show, but honour the contract (mark seen, notify).
+  // Empty tour: nothing to show. Do NOT mark seen — a surface only becomes
+  // "seen" once a coach mark actually displays, so it can still coach later
+  // when it has something to show (#93).
   if (!steps || steps.length === 0) {
-    markSeen(surfaceKey);
     opts?.onDone?.();
     return;
   }
@@ -166,6 +186,10 @@ function startTour(
 
   let index = 0;
   let ended = false;
+  // A surface is marked "seen" only once a coach mark has actually been shown,
+  // so a tour that ends having displayed nothing (all targets absent) does not
+  // burn the flag (#93).
+  let shown = false;
 
   function resolveTarget(step: CoachStep): Element | null {
     try {
@@ -197,6 +221,8 @@ function startTour(
       end(); // finished (or every remaining target vanished)
       return;
     }
+
+    shown = true; // a coach mark is now on screen
 
     try {
       el.scrollIntoView({ block: "nearest" });
@@ -240,7 +266,10 @@ function startTour(
     window.removeEventListener("resize", onReflow);
     window.removeEventListener("scroll", onReflow, true);
     overlay.remove();
-    markSeen(surfaceKey);
+    // Only record "seen" if a coach mark actually displayed. A tour that ended
+    // having shown nothing (every target absent) leaves the flag unset, so the
+    // surface can still coach on a later visit (#93).
+    if (shown) markSeen(surfaceKey);
     // Restore focus only if the origin element is still in the document.
     if (previouslyFocused && previouslyFocused.isConnected) {
       try {

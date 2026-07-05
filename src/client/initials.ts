@@ -16,7 +16,7 @@
  */
 import type { List } from "../server/types.ts";
 import { createList, getLists } from "./api.ts";
-import { runTour } from "./coachmarks.ts";
+import { resetSeen, runTour } from "./coachmarks.ts";
 import { getCookie, setCookie } from "./cookies.ts";
 
 export const INITIALS_COOKIE = "st_initials";
@@ -70,6 +70,11 @@ export function ensureInitials(): Promise<string> {
 
 function promptForInitials(): Promise<string> {
   return new Promise((resolve) => {
+    // A new / re-identifying user is (re)onboarding: clear any stale coach
+    // seen-flags so the whole progressive tour re-arms coherently — never a
+    // partial 2-of-3 from flags that drifted across builds or a cookie clear (#93).
+    resetSeen();
+
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
 

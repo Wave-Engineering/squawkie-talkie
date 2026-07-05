@@ -1,18 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Initials gate (first visit)", () => {
-  // Keep this spec about the initials gate alone. The onboarding coach mark and
-  // the empty-system first-list gate (#71) are exercised in 00-onboarding; here
-  // we suppress the coach (its seen-flag) and ensure the instance is populated
-  // so neither surface interferes with the initials-only assertions.
+  // Keep this spec about the initials gate alone. The empty-system first-list
+  // gate (#71) is avoided by seeding a list. The onboarding coach now fires WITH
+  // the gate (its seen-flag is reset on identity, #93) and can't be suppressed via
+  // localStorage, so the tests dismiss it where it would obscure the gate controls.
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem("st.coach.initials", "1");
-      } catch {
-        /* localStorage unavailable — coach simply may show; not this spec's concern */
-      }
-    });
     const res = await page.request.get("/api/lists");
     const lists: Array<{ id: number }> = await res.json();
     if (lists.length === 0) {
@@ -26,6 +19,11 @@ test.describe("Initials gate (first visit)", () => {
     await page.goto("/");
     const modal = page.locator(".modal-backdrop");
     await expect(modal).toBeVisible();
+
+    // The onboarding coach fires with the gate; dismiss it so its callout does
+    // not obscure the gate controls (Escape ends the tour; the modal stays).
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".coach-overlay")).toHaveCount(0);
 
     const input = page.locator(".modal__input");
     const button = page.locator(".modal__button");
