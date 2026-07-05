@@ -114,18 +114,7 @@ test.describe("Onboarding: initials welcome + empty-system first-list gate", () 
   }) => {
     await resetLists(page);
     await seedList(page, "Existing"); // populated -> no first-list gate to distract
-    // Suppress the sibling surfaces' tours so ONLY the initials coach is in play.
-    // Without this, submitting initials navigates to the populated lists page, whose
-    // lists tour auto-fires the same tick and races the "coach dismissed" assertion
-    // below (the lists overlay, not the initials one, is what intermittently lingers).
-    await page.addInitScript(() => {
-      try {
-        localStorage.setItem("st.coach.lists", "1");
-        localStorage.setItem("st.coach.detail", "1");
-      } catch {
-        /* localStorage unavailable — not this spec's concern */
-      }
-    });
+
     await page.goto("/");
 
     // The coach spotlights the real initials field, which holds focus under it.
@@ -134,13 +123,51 @@ test.describe("Onboarding: initials welcome + empty-system first-list gate", () 
     await expect(input).toBeFocused();
 
     // Type into the REAL field (no proxy) with the coach still up, then submit
-    // with Enter — the form's submit tears the coach down in the same motion.
+    // with Enter — the form's submit tears the initials coach down in the same
+    // motion (its teardown is coupled to the modal's removal).
     await input.fill("BJ");
     await expect(page.locator(".coach-overlay")).toBeVisible(); // still up while typing
     await input.press("Enter");
 
-    await expect(page.locator(".coach-overlay")).toHaveCount(0);
+    // Modal gone => the submit handler ran => the initials coach was torn down,
+    // and we reach the lists screen. We deliberately do NOT assert coach-overlay
+    // count here: the lists coach fires on this page (#93 resets sibling flags on
+    // identity, so it can't be suppressed via localStorage), which would race the
+    // assertion. Modal + heading are the reliable signals the interactive submit
+    // worked.
     await expect(page.locator(".modal-backdrop")).toHaveCount(0);
     await expect(page.locator(".lists__heading")).toBeVisible();
+  });
+
+  test("re-onboarding clears stale coach flags: a preset lists-seen still coaches", async ({
+    page,
+  }) => {
+    await resetLists(page);
+    await seedList(page, "Existing"); // populated -> no first-list gate
+
+    // A browser that saw the lists coach in a prior session (stale flag) but has
+    // no identity cookie, so the initials gate re-fires this session. Before #93
+    // this produced a partial 2/3 onboarding (lists coach suppressed).
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("st.coach.lists", "1");
+      } catch {
+        /* ignore */
+      }
+    });
+
+    await page.goto("/");
+
+    // Establishing identity resets the coach flags, so onboarding is coherent.
+    await expect(page.locator(".coach-overlay")).toBeVisible(); // initials coach
+    const input = page.locator(".modal__input");
+    await input.fill("BJ");
+    await input.press("Enter");
+
+    // The lists coach now fires despite the (cleared) stale flag — full onboarding.
+    await expect(page.locator(".lists__heading")).toBeVisible();
+    await expect(page.locator(".coach-callout__body")).toContainText(
+      "Name it, hit Enter",
+    );
   });
 });

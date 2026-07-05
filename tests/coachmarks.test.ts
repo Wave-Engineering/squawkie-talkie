@@ -20,6 +20,7 @@ import {
   hasSeen,
   markSeen,
   replayTour,
+  resetSeen,
   runTour,
 } from "../src/client/coachmarks.ts";
 
@@ -106,8 +107,9 @@ test("missing target skipped not thrown", () => {
   // The single step has no live target: the tour must end cleanly, not throw.
   expect(() => runTour("lists", steps)).not.toThrow();
   expect(document.querySelector(".coach-overlay")).toBeNull();
-  // Ending (even via all-skipped) still marks the surface seen.
-  expect(hasSeen("lists")).toBe(true);
+  // Nothing was shown, so the surface is NOT marked seen — it can still coach
+  // on a later visit once a target exists (#93).
+  expect(hasSeen("lists")).toBe(false);
 });
 
 test("a missing step in the middle is skipped, live steps still shown", () => {
@@ -248,6 +250,37 @@ test("a non-interactive step keeps the overlay aria-modal", () => {
   expect(
     document.querySelector(".coach-overlay")!.getAttribute("aria-modal"),
   ).toBe("true");
+});
+
+// --- #93: seen only when shown, and identity reset --------------------------
+
+test("resetSeen clears every surface's seen-flag", () => {
+  markSeen("initials");
+  markSeen("lists");
+  markSeen("detail");
+  expect(hasSeen("initials")).toBe(true);
+  expect(hasSeen("lists")).toBe(true);
+
+  resetSeen();
+
+  expect(hasSeen("initials")).toBe(false);
+  expect(hasSeen("lists")).toBe(false);
+  expect(hasSeen("detail")).toBe(false);
+});
+
+test("an all-absent tour does not burn the flag; it fires once a target exists", () => {
+  // First visit: the target is not in the DOM yet -> nothing shows, not seen.
+  runTour("lists", [{ target: "#late", body: "later" }]);
+  expect(document.querySelector(".coach-overlay")).toBeNull();
+  expect(hasSeen("lists")).toBe(false);
+
+  // Later visit: the target now exists -> the tour fires (never marked seen).
+  addTarget("late");
+  runTour("lists", [{ target: "#late", body: "later" }]);
+  expect(document.querySelector(".coach-overlay")).not.toBeNull();
+  expect(document.querySelector(".coach-callout__body")?.textContent).toBe(
+    "later",
+  );
 });
 
 test("aria-modal toggles per step as the tour advances", () => {
