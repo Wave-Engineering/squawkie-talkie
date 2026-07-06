@@ -12,6 +12,24 @@ vanilla-TS client and a JSON+SSE API backed by `bun:sqlite`. Two entities: **Squ
 Lists** and **Squawks** (state: open/retired/recorded). Read [`README.md`](README.md)
 for the feature set and [`docs/architecture.md`](docs/architecture.md) for the design.
 
+## Squawking from the CLI (`sqtk`)
+
+Agents manage squawklists via the repo-root **`sqtk`** CLI — a thin `curl`/`jq` wrapper over
+the JSON API, so you never hand-roll HTTP. Point it at an instance with `SQUAWK_URL`
+(default `http://localhost:3000`); initials auto-fill from `./.claude/agent-identity.json`
+(override with `SQUAWK_INITIALS`).
+
+```bash
+sqtk add    "wave-engine" "ENG-1 corrupts state on blocked exit"   # log (creates the list if new)
+sqtk show   "wave-engine"                                          # list + squawks + (O│R│E)
+sqtk set    "wave-engine" 3 --state recorded                       # retire/record/reopen by #seq
+sqtk lists                                                         # all lists  ·  sqtk help
+```
+
+Squawks are referenced by their per-list `#seq` (what `show`/`add` print) and **change state —
+they are never deleted** (`set --state retired`), honoring invariant #6. Symlink `sqtk` onto
+`PATH` (`~/.local/bin/sqtk`) to call it from anywhere. Wraps the routes in `src/server/api.ts`; see #95.
+
 ## Map (where things live)
 
 | Area | File | Role |
