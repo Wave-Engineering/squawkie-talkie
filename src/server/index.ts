@@ -9,11 +9,16 @@
  *                          /dist/app.js), content-type inferred from extension
  *   *                   -> public/index.html (SPA shell fallback)
  *
+ * The whole `/api/` surface (REST + SSE) is behind an optional bearer-token
+ * check (see auth.ts) — a no-op unless SQUAWK_API_TOKEN[_FILE] is set; /healthz
+ * and static/SPA assets are never gated.
+ *
  * The route logic is exported as `routeRequest` (and `fetch`) so tests can
  * exercise it without binding a port.
  */
 
 import { handleApi } from "./api.ts";
+import { checkApiToken, resolveApiToken } from "./auth.ts";
 import { shutdown, subscribe } from "./sse.ts";
 
 const PUBLIC_DIR = new URL("../../public/", import.meta.url).pathname;
@@ -24,6 +29,17 @@ export async function routeRequest(req: Request): Promise<Response> {
 
   if (req.method === "GET" && url.pathname === "/healthz") {
     return Response.json({ ok: true });
+  }
+
+  // Optional API-token gate for the whole /api surface (REST + SSE). A no-op
+  // unless a token is configured, and it only rejects requests that carry a bad
+  // Authorization header — header-absent requests pass through (see auth.ts).
+  // Placed after /healthz (open) and before /api/stream so it covers both.
+  if (url.pathname.startsWith("/api/")) {
+    const denied = checkApiToken(req);
+    if (denied) {
+      return denied;
+    }
   }
 
   // Server-Sent Events stream. Checked before handleApi (which would 404 it).
@@ -78,6 +94,10 @@ if (import.meta.main) {
     fetch: routeRequest,
   });
   console.log(`squawkie-talkie listening on http://localhost:${server.port}`);
+  // Report the auth posture at boot without ever printing the token itself.
+  console.log(
+    `API-token auth: ${resolveApiToken() ? "ENABLED" : "DISABLED"}`,
+  );
 
   // Graceful shutdown: close SSE streams + heartbeat, then stop the listener.
   const stop = (): void => {

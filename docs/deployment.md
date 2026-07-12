@@ -5,8 +5,11 @@ non-obvious gotchas, and the security posture you **must** read first.
 
 ## ⚠️ Security posture — read before deploying
 
-**There is no authentication.** Initials are a label, not an identity, and any viewer can
-edit or delete any list; concurrent edits are last-write-wins (silent overwrite).
+**There is no mandatory authentication.** Initials are a label, not an identity, and any
+viewer can edit or delete any list; concurrent edits are last-write-wins (silent overwrite).
+The optional [`SQUAWK_API_TOKEN`](#optional-api-token-auth) is an *additive* credential for
+machine clients (header-absent requests still pass), **not** a substitute for the trusted
+network / reverse proxy this deploys behind.
 
 **Deploy on a trusted internal network only. Do not expose to the public internet.**
 There is no authorization model, rate limiting, or audit trail. (See
@@ -29,9 +32,32 @@ PORT=8080 SQUAWK_DB=/var/lib/squawkie/squawk.db bun run src/server/index.ts
 |---|---|---|
 | `PORT` | `3000` | HTTP listen port |
 | `SQUAWK_DB` | `squawk.db` (cwd) | SQLite file path; `:memory:` for ephemeral/test |
+| `SQUAWK_API_TOKEN` | _(unset)_ | Optional bearer token for the `/api` surface (see below) |
+| `SQUAWK_API_TOKEN_FILE` | _(unset)_ | Path to a file holding the token (Docker/Swarm secret); wins over `SQUAWK_API_TOKEN`, trailing whitespace trimmed |
 
-The process logs `squawkie-talkie listening on http://localhost:<port>` and handles
+The process logs `squawkie-talkie listening on http://localhost:<port>` plus
+`API-token auth: ENABLED|DISABLED` (never the token value), and handles
 `SIGINT`/`SIGTERM` gracefully (closes SSE streams + heartbeat).
+
+### Optional API-token auth
+
+Set `SQUAWK_API_TOKEN` (or `SQUAWK_API_TOKEN_FILE`) to let machine clients
+authenticate to `/api/*` and `/api/stream` with `Authorization: Bearer <token>`.
+The rule is **additive — validate only if a header is present**:
+
+- Unset ⇒ feature **off**, behaves exactly as before.
+- No `Authorization` header ⇒ **allowed** (the browser UI and internal-LAN
+  clients arrive via the session/proxy path and carry no token). `/healthz` and
+  static/SPA assets are never gated.
+- `Authorization` present ⇒ a `Bearer` token matching the configured one is
+  allowed (constant-time compare); a wrong or malformed header ⇒ `401`.
+
+Because header-absent requests pass through, **the token is an *alternative*
+credential, not a standalone gate** — it does not lock down the API on its own.
+The real boundary must still be a trusted reverse proxy / internal network (see
+the security posture above). Note that native `EventSource` cannot set request
+headers, so a token-authenticating SSE client must use a fetch-based reader;
+the browser's `EventSource` connects header-less and is allowed through by design.
 
 > **Build step is mandatory.** The server serves `public/dist/app.js`; if you skip
 > `bun run build`, the client shell loads but the app bundle 404s.
