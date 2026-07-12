@@ -7,6 +7,34 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-11 — API-token auth & the sqtk client CLI
+
+### Added
+- **Optional API-token auth** — gate the `/api` surface (REST + `/api/stream`)
+  with a bearer token via `SQUAWK_API_TOKEN` (or `SQUAWK_API_TOKEN_FILE`, a
+  Docker/Swarm secret path that wins over the inline var). Additive "validate
+  only if an `Authorization` header is present": a header-absent request passes
+  through unchanged (the browser UI and internal-LAN/proxy path carry no token,
+  and native `EventSource` cannot send headers), a valid `Bearer` token is
+  allowed via a constant-time compare, and a wrong/malformed header is `401`.
+  OFF unless configured; `/healthz` and static/SPA assets are never gated; the
+  token is never logged (boot reports `ENABLED`/`DISABLED`). The token is an
+  *alternative* credential, not a standalone gate — the real boundary stays the
+  reverse proxy (#98).
+- **`sqtk` client CLI** — a thin `curl`/`jq` wrapper over the JSON API so agents
+  can manage squawklists (`lists`/`show`/`add`/`set`/`new`/`rmlist`) without
+  hand-writing HTTP; initials resolve from `SQUAWK_INITIALS` or the agent
+  identity file (#96).
+
+### Fixed
+- **Onboarding** — reset the per-identity coach "seen" flags on identity so a
+  fresh identity gets a coherent first-run onboarding instead of a half-seen
+  tour (#94).
+
+### Internal
+- Deflake the interactive-initials e2e test by presetting sibling coach
+  seen-flags (#92).
+
 ## [0.4.0] — 2026-07-04 — First-run onboarding coach marks
 
 ### Added
