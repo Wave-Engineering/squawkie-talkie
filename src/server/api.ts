@@ -26,10 +26,14 @@ import {
   createSquawk,
   deleteList,
   deleteSquawk,
+  deleteSquawkImage,
   getList,
   getListByName,
+  getSquawk,
+  getSquawkImage,
   listLists,
   listSquawks,
+  setSquawkImage,
   updateSquawk,
 } from "./db.ts";
 import { broadcast } from "./sse.ts";
@@ -206,6 +210,28 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
     return json({ error: "method not allowed" }, 405);
   }
 
+  // /api/squawks/:id/image — the one optional image on a squawk.
+  if (
+    segments.length === 4 &&
+    segments[1] === "squawks" &&
+    segments[3] === "image"
+  ) {
+    const id = parseId(segments[2]!);
+    if (id === null) {
+      return json({ error: "squawk not found" }, 404);
+    }
+    if (method === "GET") {
+      return getSquawkImageRoute(id);
+    }
+    if (method === "POST") {
+      return setSquawkImageRoute(req, id);
+    }
+    if (method === "DELETE") {
+      return deleteSquawkImageRoute(id);
+    }
+    return json({ error: "method not allowed" }, 405);
+  }
+
   return json({ error: "not found" }, 404);
 }
 
@@ -333,4 +359,99 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
     }
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Squawk image routes
+// ---------------------------------------------------------------------------
+
+/**
+ * Raster types we accept and serve back. SVG is deliberately excluded — an
+ * uploaded `<svg>` can carry script and would be an XSS vector when served
+ * same-origin, so the boundary is a strict raster allowlist, not a denylist.
+ */
+const IMAGE_MIME_ALLOWLIST: ReadonlySet<string> = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+/**
+ * Server-side cap on stored image bytes. The client resizes to a bounded JPEG
+ * first, so this is the backstop against a raw-camera or crafted upload, not
+ * the primary size control. ~2 MB comfortably clears a 1600px q0.8 JPEG.
+ */
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** POST /api/squawks/:id/image — body is the raw image bytes; `Content-Type` names the mime. */
+async function setSquawkImageRoute(req: Request, id: number): Promise<Response> {
+  // Existence first: a *specific* 404 (not the generic "not found") both matches
+  // the sibling squawk routes and keeps the route probeable by the drift guard.
+  if (!getSquawk(id)) {
+    return json({ error: "squawk not found" }, 404);
+  }
+
+  const mime = (req.headers.get("content-type") ?? "")
+    .split(";")[0]!
+    .trim()
+    .toLowerCase();
+  if (!IMAGE_MIME_ALLOWLIST.has(mime)) {
+    return json({ error: "unsupported image type" }, 415);
+  }
+
+  // Fast-reject an over-cap upload on its declared Content-Length *before*
+  // buffering the whole body into memory. Content-Length can lie, so the actual
+  // byte check below still runs — this just bounds peak memory for honest (and
+  // most crafted) clients instead of buffering up to Bun's 128 MB default first.
+  const declaredLen = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declaredLen) && declaredLen > MAX_IMAGE_BYTES) {
+    return json({ error: "image too large" }, 413);
+  }
+
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (bytes.byteLength === 0) {
+    return json({ error: "empty image body" }, 400);
+  }
+  // Backstop: enforce on actual bytes too (a spoofed/absent Content-Length can
+  // slip past the fast-reject above).
+  if (bytes.byteLength > MAX_IMAGE_BYTES) {
+    return json({ error: "image too large" }, 413);
+  }
+
+  setSquawkImage(id, { mime, bytes, byteSize: bytes.byteLength });
+  const squawk = getSquawk(id)!; // now has_image: true
+  broadcast({ type: "squawk.updated", squawk });
+  return json(squawk);
+}
+
+/** GET /api/squawks/:id/image — the stored bytes with their stored (raster) mime. */
+function getSquawkImageRoute(id: number): Response {
+  const img = getSquawkImage(id);
+  if (!img) {
+    return json({ error: "image not found" }, 404);
+  }
+  // Wrap in a Blob (a well-typed BodyInit) — a bare Uint8Array trips TS's
+  // ArrayBufferLike strictness, and the Blob carries the bytes verbatim.
+  return new Response(new Blob([img.bytes]), {
+    headers: {
+      // Always the stored allowlisted raster type — never text/html or svg.
+      "Content-Type": img.mime,
+      "Content-Length": String(img.byteSize),
+      "Cache-Control": "no-cache",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
+}
+
+/** DELETE /api/squawks/:id/image — drop only the image (not the squawk). */
+function deleteSquawkImageRoute(id: number): Response {
+  if (!deleteSquawkImage(id)) {
+    // No image row (squawk absent, or squawk present but imageless) → specific 404.
+    return json({ error: "image not found" }, 404);
+  }
+  const squawk = getSquawk(id);
+  if (squawk) {
+    broadcast({ type: "squawk.updated", squawk });
+  }
+  return json({ ok: true });
 }

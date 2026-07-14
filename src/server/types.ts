@@ -17,7 +17,14 @@ export interface List {
   created_at: string;
 }
 
-/** A single squawk belonging to a list. */
+/**
+ * A single squawk belonging to a list.
+ *
+ * `has_image` is a *derived* wire field, not a stored column: it reflects
+ * whether a row exists in `squawk_images` for this squawk. The image bytes are
+ * never inlined here — clients lazy-load `GET /api/squawks/:id/image` when the
+ * flag is set (bytes must never ride the squawk JSON or an SSE frame).
+ */
 export interface Squawk {
   id: number;
   list_id: number;
@@ -27,4 +34,5 @@ export interface Squawk {
   initials: string;
   created_at: string;
   updated_at: string;
+  has_image: boolean;
 }

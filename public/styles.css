@@ -207,11 +207,12 @@ body {
   gap: var(--space-3);
 }
 
-/* A squawk row: [seq] [text input] [state select]. Newest on top. */
+/* A squawk row: [seq] [text input] [state select] [image]. Newest on top.
+   The trailing `auto` collapses to 0 on the 2-child new-squawk row. */
 .squawk-row {
   position: relative;
   display: grid;
-  grid-template-columns: 2.5rem 1fr auto;
+  grid-template-columns: 2.5rem 1fr auto auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -323,6 +324,76 @@ body {
 .squawk-row:focus-within .squawk-row__recorder {
   opacity: 1;
   transform: translateY(0);
+}
+
+/* Image affordance: a camera/upload button plus an optional thumbnail + remove.
+   Sits in the row's trailing column; stays compact so narrow phones keep the
+   text column readable. */
+.squawk-row__image {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.squawk-row__image-btn {
+  padding: var(--space-1) var(--space-2);
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.squawk-row__image-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
+}
+.squawk-row__image-btn:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+.squawk-row__thumb-link {
+  display: inline-flex;
+  line-height: 0;
+}
+/* Reclaim the `hidden` attribute: the class's `display` above would otherwise
+   beat the UA `[hidden]{display:none}` rule and render an empty <img>. */
+.squawk-row__thumb-link[hidden] {
+  display: none;
+}
+.squawk-row__thumb {
+  width: 2.25rem;
+  height: 2.25rem;
+  object-fit: cover;
+  display: block;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+}
+.squawk-row__thumb-link:hover .squawk-row__thumb {
+  border-color: var(--accent-dim);
+}
+
+.squawk-row__image-remove {
+  padding: 0 var(--space-2);
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+.squawk-row__image-remove:hover {
+  color: var(--text);
+  border-color: var(--state-retired);
 }
 
 /* Initials modal (cookie gate) */
