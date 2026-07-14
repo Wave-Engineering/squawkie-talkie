@@ -15,9 +15,11 @@ for the feature set and [`docs/architecture.md`](docs/architecture.md) for the d
 ## Squawking from the CLI (`sqtk`)
 
 Agents manage squawklists via the repo-root **`sqtk`** CLI — a thin `curl`/`jq` wrapper over
-the JSON API, so you never hand-roll HTTP. Point it at an instance with `SQUAWK_URL`
-(default `http://localhost:3000`); initials auto-fill from `./.claude/agent-identity.json`
-(override with `SQUAWK_INITIALS`).
+the JSON API, so you never hand-roll HTTP. Point it at an instance with `SQUAWK_URL` — it is
+**required, with no default**: unset, `sqtk` fails loud rather than silently talking to some
+`localhost` instance nobody is watching (per-process SSE makes a misrouted write a split-brain
+trap). Use `http://localhost:7700` for local dev, or your deployed URL. Initials auto-fill
+from `./.claude/agent-identity.json` (override with `SQUAWK_INITIALS`).
 
 ```bash
 sqtk add    "wave-engine" "ENG-1 corrupts state on blocked exit"   # log (creates the list if new)
