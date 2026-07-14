@@ -84,11 +84,14 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | DELETE | `/api/lists/:id` | — | `{ ok: true }` (cascades squawks) |
 | GET | `/api/lists/:id/squawks` | — | `Squawk[]` |
 | POST | `/api/lists/:id/squawks` | `{ text, initials }` | `201 Squawk` |
+| POST | `/api/squawks` | `{ list_name, text, initials }` | `201 Squawk` — quick-add by list name (creates the list if absent); `400` on bad input |
 | PATCH | `/api/squawks/:id` | `{ text?, state?, initials? }` | `200 Squawk` (needs `text` or `state`) |
+| DELETE | `/api/squawks/:id` | — | `{ ok: true }` — the **one direct** squawk true-delete; its sole caller is the editor `u` undo, retracting a just-created squawk within the settle-in window (`404` if unknown). Every other individual-squawk transition is a state change; whole-list deletion cascades separately via `DELETE /api/lists/:id`. |
 | GET | `/api/stream` | — | `text/event-stream` |
 
 **SSE events:** `{type:"list.created", list}` · `{type:"list.deleted", id}` ·
-`{type:"squawk.created", squawk}` · `{type:"squawk.updated", squawk}`.
+`{type:"squawk.created", squawk}` · `{type:"squawk.updated", squawk}` ·
+`{type:"squawk.deleted", id}`.
 
 **Export format:** a list export is exactly the `GET /api/lists/:id` body
 (`{id, name, created_at, squawks[]}`), pretty-printed.
