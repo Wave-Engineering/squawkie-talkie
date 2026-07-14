@@ -630,6 +630,27 @@ export function renderLists(container: HTMLElement): void {
         removeList(id, row);
       }
     },
+    // On reconnect: re-fetch and reconcile what changed while we were offline.
+    resync: async () => {
+      let fresh: List[];
+      try {
+        fresh = await getLists();
+      } catch {
+        return; // leave rows as-is; the indicator already signals the problem
+      }
+      const freshIds = new Set(fresh.map((l) => l.id));
+      // Add lists created while offline (addList de-dupes anything already shown).
+      for (const l of fresh) {
+        addList(l);
+      }
+      // Remove lists deleted while offline.
+      for (const l of [...model]) {
+        if (!freshIds.has(l.id)) {
+          const row = rows.querySelector<HTMLElement>(`[data-list-id="${l.id}"]`);
+          if (row) removeList(l.id, row);
+        }
+      }
+    },
   });
 
   // --- initial load --------------------------------------------------------

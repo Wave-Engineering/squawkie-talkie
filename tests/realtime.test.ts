@@ -7,6 +7,8 @@ import {
   activeSquawkId,
   applyEvent,
   connect,
+  connectionStatus,
+  onConnectionStatus,
   shouldApplyToInput,
 } from "../src/client/realtime.ts";
 import type { List, Squawk } from "../src/server/types.ts";
@@ -261,5 +263,32 @@ test("connect swallows a non-JSON frame without dispatching", () => {
       FakeEventSource.last!.emit("message", { data: ": heartbeat" }),
     ).not.toThrow();
     expect(received).toHaveLength(0);
+  });
+});
+
+// --- connection status (#116) ------------------------------------------------
+
+test("an `open` frame flips connectionStatus to online", () => {
+  withFakeEventSource(() => {
+    connect();
+    FakeEventSource.last!.emit("open", {});
+    expect(connectionStatus()).toBe("online");
+  });
+});
+
+test("onConnectionStatus emits the current status immediately and on change", () => {
+  withFakeEventSource(() => {
+    connect();
+    FakeEventSource.last!.emit("open", {}); // ensure a known starting point
+
+    const seen: string[] = [];
+    const off = onConnectionStatus((s) => seen.push(s));
+    expect(seen).toEqual(["online"]); // immediate emit of the current status
+
+    // A duplicate status is not re-emitted; a real change is.
+    FakeEventSource.last!.emit("open", {});
+    expect(seen).toEqual(["online"]);
+
+    off();
   });
 });
