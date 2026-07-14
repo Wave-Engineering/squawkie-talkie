@@ -26,8 +26,9 @@ sqtk set    "wave-engine" 3 --state recorded                       # retire/reco
 sqtk lists                                                         # all lists  ·  sqtk help
 ```
 
-Squawks are referenced by their per-list `#seq` (what `show`/`add` print) and **change state —
-they are never deleted** (`set --state retired`), honoring invariant #6. Symlink `sqtk` onto
+Squawks are referenced by their per-list `#seq` (what `show`/`add` print) and **change state
+rather than being deleted** (`set --state retired`) — the one true-delete is the editor's `u`
+undo (invariant #6), which `sqtk` does not expose. Symlink `sqtk` onto
 `PATH` (`~/.local/bin/sqtk`) to call it from anywhere. Wraps the routes in `src/server/api.ts`; see #95.
 
 ## Map (where things live)
@@ -63,7 +64,12 @@ the client's `EventSource` applies events through the mounted view's binding.
 5. **Autosave baseline updates only on PATCH success** (`detail.ts`), so a failed save
    retries instead of silently dropping the edit.
 6. **Delete cascades** (`ON DELETE CASCADE`) = "expunge from the instance." List delete
-   needs an inline confirm; squawks are never deleted (they change state).
+   needs an inline confirm. Squawks move through their lifecycle by **changing state** and
+   are never deleted *that* way — the sole **direct** squawk true-delete is the editor's `u`
+   **undo**, which retracts a just-created squawk within the settle-in window
+   (`DELETE /api/squawks/:id`, `detail.ts` `doUndo`; a mistake being taken back, not a
+   lifecycle event). (Deleting the *list* cascades its squawks — a separate list-level op.)
+   Don't add any other squawk-delete path.
 7. **Initials normalize to ≤3 uppercase alphanumerics**, server-side (`api.ts`) and client (`initials.ts`).
 
 ## Run / test / build
