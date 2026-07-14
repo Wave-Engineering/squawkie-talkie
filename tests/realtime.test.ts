@@ -23,6 +23,7 @@ function squawk(over: Partial<Squawk> = {}): Squawk {
     initials: "BJ",
     created_at: "t",
     updated_at: "t",
+    has_image: false,
     ...over,
   };
 }

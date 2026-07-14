@@ -48,6 +48,18 @@ export function getDb(): Database {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    -- One optional image per squawk. Bytes live in-DB so the "instance = one
+    -- file" backup/expunge story holds and the cascade below reclaims them for
+    -- free: deleting the squawk (the undo) or its list drops the image with no
+    -- app-level cleanup. squawk_id is both PK and FK, enforcing the 1:1.
+    CREATE TABLE IF NOT EXISTS squawk_images (
+      squawk_id INTEGER PRIMARY KEY REFERENCES squawks(id) ON DELETE CASCADE,
+      mime TEXT NOT NULL,
+      bytes BLOB NOT NULL,
+      byte_size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
   `);
   connection = db;
   return connection;
@@ -109,6 +121,19 @@ export function deleteList(id: number): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * The stored squawk columns, exactly as they come back from `RETURNING *` /
+ * `SELECT *`. The public `Squawk` adds the derived `has_image` flag on top; DB
+ * helpers project a `SquawkRow` up to a `Squawk` by attaching that flag (either
+ * a known constant, or an `EXISTS`/lookup against `squawk_images`).
+ */
+type SquawkRow = Omit<Squawk, "has_image">;
+
+/** Coerce SQLite's 0/1 `EXISTS` result into the `has_image` boolean. */
+function rowWithImageFlag(row: SquawkRow & { has_image: number }): Squawk {
+  return { ...row, has_image: !!row.has_image };
+}
+
+/**
  * Create a squawk under `listId`, allocating a per-list monotonic `seq`.
  *
  * Wrapped in a transaction so the seq read+increment and the insert are
@@ -136,12 +161,14 @@ function getSquawkTx(): SquawkTx {
       }
 
       const ts = now();
-      return db
+      const row = db
         .query(
           `INSERT INTO squawks (list_id, seq, text, state, initials, created_at, updated_at)
            VALUES (?, ?, ?, 'open', ?, ?, ?) RETURNING *`,
         )
-        .get(listId, seqRow.seq, text, initials, ts, ts) as Squawk;
+        .get(listId, seqRow.seq, text, initials, ts, ts) as SquawkRow;
+      // A just-created squawk has no image yet; RETURNING can't carry a subquery.
+      return { ...row, has_image: false };
     },
   );
   return squawkTx;
@@ -187,11 +214,23 @@ export function updateSquawk(
 
   const row = getDb()
     .query(`UPDATE squawks SET ${sets.join(", ")} WHERE id = ? RETURNING *`)
-    .get(...params) as Squawk | null;
+    .get(...params) as SquawkRow | null;
   if (!row) {
     throw new Error(`updateSquawk: squawk ${id} not found`);
   }
-  return row;
+  return { ...row, has_image: squawkHasImage(id) };
+}
+
+/** Return one squawk by id (with its derived `has_image`), or null if absent. */
+export function getSquawk(id: number): Squawk | null {
+  const row = getDb()
+    .query(
+      `SELECT squawks.*,
+              EXISTS(SELECT 1 FROM squawk_images WHERE squawk_id = squawks.id) AS has_image
+       FROM squawks WHERE id = ?`,
+    )
+    .get(id) as (SquawkRow & { has_image: number }) | null;
+  return row ? rowWithImageFlag(row) : null;
 }
 
 /**
@@ -202,9 +241,73 @@ export function deleteSquawk(id: number): boolean {
   return getDb().query("DELETE FROM squawks WHERE id = ?").run(id).changes > 0;
 }
 
-/** Return a list's squawks, newest first (`seq DESC`). */
+/** Return a list's squawks, newest first (`seq DESC`), each with `has_image`. */
 export function listSquawks(listId: number): Squawk[] {
-  return getDb()
-    .query("SELECT * FROM squawks WHERE list_id = ? ORDER BY seq DESC")
-    .all(listId) as Squawk[];
+  const rows = getDb()
+    .query(
+      `SELECT squawks.*,
+              EXISTS(SELECT 1 FROM squawk_images WHERE squawk_id = squawks.id) AS has_image
+       FROM squawks WHERE list_id = ? ORDER BY seq DESC`,
+    )
+    .all(listId) as (SquawkRow & { has_image: number })[];
+  return rows.map(rowWithImageFlag);
+}
+
+// ---------------------------------------------------------------------------
+// Squawk images (one optional image per squawk; bytes stored in-DB)
+// ---------------------------------------------------------------------------
+
+/** An image's stored bytes plus the metadata needed to serve it. */
+export interface SquawkImage {
+  mime: string;
+  // ArrayBuffer-backed so it serves as a BodyInit/BlobPart without a copy.
+  bytes: Uint8Array<ArrayBuffer>;
+  byteSize: number;
+}
+
+/**
+ * Attach (or replace) the image for a squawk. Upsert on the `squawk_id` PK so
+ * re-attaching swaps the bytes rather than erroring. Caller is responsible for
+ * validating `mime` (allowlist) and size before calling.
+ */
+export function setSquawkImage(
+  squawkId: number,
+  img: { mime: string; bytes: Uint8Array; byteSize: number },
+): void {
+  getDb()
+    .query(
+      `INSERT INTO squawk_images (squawk_id, mime, bytes, byte_size, created_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(squawk_id) DO UPDATE SET
+         mime = excluded.mime, bytes = excluded.bytes,
+         byte_size = excluded.byte_size, created_at = excluded.created_at`,
+    )
+    .run(squawkId, img.mime, img.bytes, img.byteSize, now());
+}
+
+/** Return a squawk's image bytes + mime, or null if it has none. */
+export function getSquawkImage(squawkId: number): SquawkImage | null {
+  const row = getDb()
+    .query("SELECT mime, bytes, byte_size FROM squawk_images WHERE squawk_id = ?")
+    .get(squawkId) as
+    | { mime: string; bytes: Uint8Array<ArrayBuffer>; byte_size: number }
+    | null;
+  return row
+    ? { mime: row.mime, bytes: row.bytes, byteSize: row.byte_size }
+    : null;
+}
+
+/** Remove a squawk's image. Returns true if a row was deleted. */
+export function deleteSquawkImage(squawkId: number): boolean {
+  return (
+    getDb().query("DELETE FROM squawk_images WHERE squawk_id = ?").run(squawkId)
+      .changes > 0
+  );
+}
+
+/** Whether a squawk currently has an image (cheap existence probe). */
+export function squawkHasImage(squawkId: number): boolean {
+  return !!getDb()
+    .query("SELECT 1 FROM squawk_images WHERE squawk_id = ? LIMIT 1")
+    .get(squawkId);
 }

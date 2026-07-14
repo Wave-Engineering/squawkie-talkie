@@ -327,3 +327,191 @@ test("missing list -> 404", async () => {
     (await routeRequest(req("GET", "/api/lists/999999/squawks"))).status,
   ).toBe(404);
 });
+
+// --- squawk images (#113) ----------------------------------------------------
+
+/** Build a raw-bytes image request (not JSON — the image API takes the body verbatim). */
+function imgReq(
+  method: string,
+  path: string,
+  mime?: string,
+  bytes?: Uint8Array,
+): Request {
+  return new Request(`http://x${path}`, {
+    method,
+    headers: mime ? { "content-type": mime } : {},
+    body: bytes as BodyInit | undefined,
+  });
+}
+
+/** Create a list + one squawk, returning the squawk JSON. */
+async function seedSquawk(listName: string) {
+  const list = await createList(listName);
+  return (
+    await routeRequest(
+      req("POST", `/api/lists/${list.id}/squawks`, { text: "x", initials: "BJ" }),
+    )
+  ).json();
+}
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+test("a fresh squawk has has_image=false", async () => {
+  const sq = await seedSquawk("ImgFresh");
+  expect(sq.has_image).toBe(false);
+});
+
+test("POST image attaches, flips has_image, and GET returns the same bytes + mime", async () => {
+  const sq = await seedSquawk("ImgAttach");
+
+  const post = await routeRequest(
+    imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG),
+  );
+  expect(post.status).toBe(200);
+  expect((await post.json()).has_image).toBe(true);
+
+  // has_image is visible on the list-detail projection too.
+  const detail = await (
+    await routeRequest(req("GET", `/api/lists/${sq.list_id}`))
+  ).json();
+  expect(detail.squawks[0].has_image).toBe(true);
+
+  const get = await routeRequest(req("GET", `/api/squawks/${sq.id}/image`));
+  expect(get.status).toBe(200);
+  expect(get.headers.get("content-type")).toBe("image/png");
+  expect(get.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(new Uint8Array(await get.arrayBuffer())).toEqual(PNG);
+});
+
+test("POST image replaces an existing image (upsert, still 1:1)", async () => {
+  const sq = await seedSquawk("ImgReplace");
+  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+  const res = await routeRequest(
+    imgReq("POST", `/api/squawks/${sq.id}/image`, "image/jpeg", jpeg),
+  );
+  expect(res.status).toBe(200);
+
+  const get = await routeRequest(req("GET", `/api/squawks/${sq.id}/image`));
+  expect(get.headers.get("content-type")).toBe("image/jpeg");
+  expect(new Uint8Array(await get.arrayBuffer())).toEqual(jpeg);
+});
+
+test("GET image is 404 when the squawk has none", async () => {
+  const sq = await seedSquawk("ImgNone");
+  expect(
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(404);
+});
+
+test("POST image rejects a non-allowlisted mime (SVG/HTML) with 415", async () => {
+  const sq = await seedSquawk("ImgMime");
+  const svg = new Uint8Array([0x3c, 0x73, 0x76, 0x67]); // "<svg"
+  expect(
+    (
+      await routeRequest(
+        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/svg+xml", svg),
+      )
+    ).status,
+  ).toBe(415);
+  expect(
+    (
+      await routeRequest(
+        imgReq("POST", `/api/squawks/${sq.id}/image`, "text/html", svg),
+      )
+    ).status,
+  ).toBe(415);
+});
+
+test("POST image rejects an oversize body with 413", async () => {
+  const sq = await seedSquawk("ImgBig");
+  const tooBig = new Uint8Array(2 * 1024 * 1024 + 1); // one byte over the 2 MB cap
+  expect(
+    (
+      await routeRequest(
+        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", tooBig),
+      )
+    ).status,
+  ).toBe(413);
+});
+
+test("POST image rejects an empty body with 400", async () => {
+  const sq = await seedSquawk("ImgEmpty");
+  expect(
+    (
+      await routeRequest(
+        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", new Uint8Array()),
+      )
+    ).status,
+  ).toBe(400);
+});
+
+test("POST image to an unknown squawk is 404", async () => {
+  expect(
+    (
+      await routeRequest(
+        imgReq("POST", "/api/squawks/999999/image", "image/png", PNG),
+      )
+    ).status,
+  ).toBe(404);
+});
+
+test("DELETE image clears has_image and 404s a subsequent GET", async () => {
+  const sq = await seedSquawk("ImgDelete");
+  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+
+  const del = await routeRequest(req("DELETE", `/api/squawks/${sq.id}/image`));
+  expect(del.status).toBe(200);
+  expect(await del.json()).toEqual({ ok: true });
+
+  expect(
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(404);
+  const detail = await (
+    await routeRequest(req("GET", `/api/lists/${sq.list_id}`))
+  ).json();
+  expect(detail.squawks[0].has_image).toBe(false);
+});
+
+test("DELETE image on a squawk without one is 404", async () => {
+  const sq = await seedSquawk("ImgDeleteNone");
+  expect(
+    (await routeRequest(req("DELETE", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(404);
+});
+
+test("deleting the squawk cascades its image (no orphan row)", async () => {
+  const sq = await seedSquawk("ImgCascadeSquawk");
+  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+
+  expect((await routeRequest(req("DELETE", `/api/squawks/${sq.id}`))).status).toBe(
+    200,
+  );
+  // The image row is gone with the squawk.
+  expect(
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(404);
+});
+
+test("deleting the list cascades its squawks' images", async () => {
+  const sq = await seedSquawk("ImgCascadeList");
+  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+
+  expect(
+    (await routeRequest(req("DELETE", `/api/lists/${sq.list_id}`))).status,
+  ).toBe(200);
+  expect(
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(404);
+});
+
+test("undocumented methods on the image route are 405", async () => {
+  const sq = await seedSquawk("ImgMethods");
+  expect(
+    (await routeRequest(req("PUT", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(405);
+  expect(
+    (await routeRequest(req("PATCH", `/api/squawks/${sq.id}/image`))).status,
+  ).toBe(405);
+});

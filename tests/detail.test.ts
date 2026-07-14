@@ -4,6 +4,7 @@ import {
   countByState,
   cycleState,
   debounce,
+  fitWithin,
   onEnter,
   stateClass,
 } from "../src/client/detail.ts";
@@ -28,6 +29,7 @@ test("countByState tallies open / retired / recorded", () => {
     initials: "BJ",
     created_at: "t",
     updated_at: "t",
+    has_image: false,
   });
   expect(countByState([])).toEqual({ open: 0, retired: 0, recorded: 0 });
   expect(
@@ -137,4 +139,20 @@ test("cycleState backward wraps through open → recorded → retired → open",
   expect(cycleState("open", "backward")).toBe("recorded");
   expect(cycleState("recorded", "backward")).toBe("retired");
   expect(cycleState("retired", "backward")).toBe("open");
+});
+
+// --- fitWithin ---------------------------------------------------------------
+
+test("fitWithin leaves an image already within the box unchanged", () => {
+  expect(fitWithin(800, 600, 1600)).toEqual({ width: 800, height: 600 });
+  expect(fitWithin(1600, 1600, 1600)).toEqual({ width: 1600, height: 1600 });
+});
+
+test("fitWithin scales the longest edge to maxEdge, preserving aspect", () => {
+  expect(fitWithin(3200, 2400, 1600)).toEqual({ width: 1600, height: 1200 });
+  expect(fitWithin(2400, 3200, 1600)).toEqual({ width: 1200, height: 1600 });
+});
+
+test("fitWithin never upscales a small image", () => {
+  expect(fitWithin(100, 50, 1600)).toEqual({ width: 100, height: 50 });
 });

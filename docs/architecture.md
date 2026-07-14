@@ -29,12 +29,13 @@ before the stream so it covers REST *and* SSE while leaving healthz and static a
 `bun:sqlite`, foreign keys ON, schema created lazily on first connection (`db.ts`).
 
 ```
-lists                              squawks
-  id        INTEGER PK              id          INTEGER PK
-  name      TEXT                    list_id     INTEGER FK → lists(id) ON DELETE CASCADE
-  next_seq  INTEGER (allocator)     seq         INTEGER  (per-list, monotonic, never reused)
-  created_at TEXT (ISO)             text        TEXT
-                                    state       TEXT  CHECK in (open|retired|recorded)
+lists                              squawks                          squawk_images
+  id        INTEGER PK              id          INTEGER PK             squawk_id INTEGER PK
+  name      TEXT                    list_id     INTEGER FK → lists(id)   └─ FK → squawks(id) ON DELETE CASCADE
+  next_seq  INTEGER (allocator)                 ON DELETE CASCADE      mime      TEXT (raster allowlist)
+  created_at TEXT (ISO)             seq         INTEGER (per-list)     bytes     BLOB
+                                    text        TEXT                   byte_size INTEGER
+                                    state       TEXT CHECK(open|…)     created_at TEXT
                                     initials    TEXT  (recorder)
                                     created_at  TEXT
                                     updated_at  TEXT
@@ -42,7 +43,13 @@ lists                              squawks
 
 - **Per-list `seq`** is allocated in a transaction by incrementing `lists.next_seq`; it is
   identity, not a row index, so gaps after a delete are correct.
-- **Delete cascades** — removing a list removes its squawks ("expunge from the instance").
+- **Delete cascades** — removing a list removes its squawks ("expunge from the instance"),
+  and removing a squawk removes its image. `squawk_images.squawk_id` is both PK and FK, so the
+  1:1 is enforced and the `u` undo / list-delete reclaim image bytes with no app-level cleanup.
+- **Image bytes live in-DB** — one optional image per squawk, stored as a BLOB so "instance =
+  one file" holds for backup and expunge. Bytes are **never** inlined into squawk JSON or an SSE
+  frame; the public squawk carries a derived **`has_image`** boolean and clients lazy-load
+  `GET /api/squawks/:id/image` when it is set.
 - **`next_seq` is internal** — `api.ts` `publicList()` strips it before any response.
 
 ## Realtime
@@ -87,6 +94,9 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | POST | `/api/squawks` | `{ list_name, text, initials }` | `201 Squawk` — quick-add by list name (creates the list if absent); `400` on bad input |
 | PATCH | `/api/squawks/:id` | `{ text?, state?, initials? }` | `200 Squawk` (needs `text` or `state`) |
 | DELETE | `/api/squawks/:id` | — | `{ ok: true }` — the **one direct** squawk true-delete; its sole caller is the editor `u` undo, retracting a just-created squawk within the settle-in window (`404` if unknown). Every other individual-squawk transition is a state change; whole-list deletion cascades separately via `DELETE /api/lists/:id`. |
+| POST | `/api/squawks/:id/image` | raw image bytes; `Content-Type: image/jpeg` \| `image/png` \| `image/webp` | `200 Squawk` — attach or replace the squawk's one optional image; `404` unknown squawk, `415` type not in the raster allowlist, `413` over the ~2 MB cap, `400` empty body |
+| GET | `/api/squawks/:id/image` | — | the stored image bytes with their stored raster `Content-Type` (never `text/html` / `image/svg+xml`); `404` if the squawk has no image |
+| DELETE | `/api/squawks/:id/image` | — | `{ ok: true }` — remove **only** the image, not the squawk (`404` if none). Distinct from `DELETE /api/squawks/:id`. |
 | GET | `/api/stream` | — | `text/event-stream` |
 
 **SSE events:** `{type:"list.created", list}` · `{type:"list.deleted", id}` ·
@@ -94,7 +104,8 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 `{type:"squawk.deleted", id}`.
 
 **Export format:** a list export is exactly the `GET /api/lists/:id` body
-(`{id, name, created_at, squawks[]}`), pretty-printed.
+(`{id, name, created_at, squawks[]}`), pretty-printed. Squawk images are **not**
+bundled in the export (v1) — a squawk's `has_image` flag round-trips, its bytes do not.
 
 ## Security posture
 
@@ -119,3 +130,11 @@ today — like the browser, it relies on the header-absent pass-through.
 setting). The real boundary is and remains the reverse proxy. If wider exposure is ever
 needed, *mandatory* authentication and an authorization model are prerequisites, and both
 are explicitly out of current scope.
+
+**Image uploads** add an upload surface even on a trusted network, so the boundary is a strict
+**raster allowlist** — `image/jpeg` / `image/png` / `image/webp` only. SVG is deliberately
+rejected (an uploaded `<svg>` can carry script and would be an XSS vector when served
+same-origin), and stored images are served back with their stored raster `Content-Type` plus
+`X-Content-Type-Options: nosniff`, never `text/html`. Bytes are capped server-side (~2 MB) on
+the *actual* body length (a client-supplied `Content-Length` can lie). The client resizes to a
+bounded JPEG before upload, which also strips EXIF/GPS metadata from phone photos.

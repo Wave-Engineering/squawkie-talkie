@@ -28,8 +28,11 @@ import type { Squawk, SquawkState } from "../server/types.ts";
 import {
   createSquawk,
   deleteSquawk as apiDeleteSquawk,
+  deleteSquawkImage,
   getList,
+  squawkImageUrl,
   updateSquawk,
+  uploadSquawkImage,
   type ListDetail,
 } from "./api.ts";
 import {
@@ -56,6 +59,12 @@ const SETTLE_IN_MS = 30_000;
 
 /** Chord timeout: how long to wait for the second key in dd/yy. */
 const CHORD_TIMEOUT_MS = 500;
+
+/** Longest edge (px) a picked image is scaled down to before upload. */
+const IMAGE_MAX_EDGE = 1600;
+
+/** JPEG quality for the client-side re-encode (bounds size, strips EXIF). */
+const IMAGE_QUALITY = 0.8;
 
 // ---------------------------------------------------------------------------
 // First-run coaching (Epic #69, Story #73) — consumes the engine (#70).
@@ -213,6 +222,25 @@ export function onEnter(input: EnterInput): EnterDecision {
   return { action: "commit", focusNewBox: true };
 }
 
+/**
+ * Target dimensions to fit `(w, h)` inside a `maxEdge`×`maxEdge` box while
+ * preserving aspect ratio. Never upscales — a source already within the box is
+ * returned unchanged. Pure (no DOM), so it's unit-tested; the canvas re-encode
+ * that consumes it lives in {@link resizeImageToBlob}.
+ */
+export function fitWithin(
+  w: number,
+  h: number,
+  maxEdge: number,
+): { width: number; height: number } {
+  const longest = Math.max(w, h);
+  if (longest <= maxEdge) {
+    return { width: w, height: h };
+  }
+  const scale = maxEdge / longest;
+  return { width: Math.round(w * scale), height: Math.round(h * scale) };
+}
+
 /** Cycle a state forward or backward through the STATES array. */
 export function cycleState(
   current: SquawkState,
@@ -252,6 +280,40 @@ export async function renderList(
 
   const model = new Map<number, Squawk>();
   const rowHandles = new Map<number, RowHandle>();
+
+  // One shared file picker for the whole detail view. Keeping it here (not per
+  // row) means each squawk row has exactly one <input> — its text box — so
+  // row-scoped selectors stay unambiguous. A row's 📷 button sets the target
+  // squawk and opens this picker; on pick we resize on a <canvas> and upload.
+  const imageFileInput = document.createElement("input");
+  imageFileInput.type = "file";
+  imageFileInput.accept = "image/*";
+  imageFileInput.hidden = true;
+  // No `capture` attribute on purpose: it would force the camera on mobile and
+  // hide the photo library, but the feature is "take *or* upload". `accept`
+  // still offers "Take Photo" in the native picker, so both paths stay open.
+  imageFileInput.setAttribute("aria-label", "Attach a photo");
+  let pendingImageSquawkId: number | null = null;
+
+  function pickImage(squawkId: number): void {
+    pendingImageSquawkId = squawkId;
+    imageFileInput.click();
+  }
+
+  imageFileInput.addEventListener("change", () => {
+    const file = imageFileInput.files?.[0];
+    imageFileInput.value = ""; // let the same file be re-picked later
+    const targetId = pendingImageSquawkId;
+    pendingImageSquawkId = null;
+    if (!file || targetId === null) return;
+    resizeImageToBlob(file)
+      .then((blob) => uploadSquawkImage(targetId, blob))
+      .then((updated) => {
+        model.set(updated.id, updated);
+        rowHandles.get(targetId)?.refreshImage();
+      })
+      .catch((err) => console.error("image upload failed", err));
+  });
 
   // Header
   const header = document.createElement("div");
@@ -641,7 +703,14 @@ export async function renderList(
     }
     if (rowHandles.has(squawk.id)) return;
     model.set(squawk.id, squawk);
-    const handle = buildSquawkRow(squawk, id, initials, model, updateCounts);
+    const handle = buildSquawkRow(
+      squawk,
+      id,
+      initials,
+      model,
+      updateCounts,
+      pickImage,
+    );
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
     updateCounts();
@@ -657,6 +726,7 @@ export async function renderList(
     model.set(squawk.id, squawk);
     handle.setState(squawk.state);
     handle.setRecorder(squawk.initials);
+    handle.setHasImage(squawk.has_image);
     if (applyToInput) {
       handle.setText(squawk.text);
     }
@@ -730,7 +800,14 @@ export async function renderList(
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
     model.set(squawk.id, squawk);
-    const handle = buildSquawkRow(squawk, id, initials, model, updateCounts);
+    const handle = buildSquawkRow(
+      squawk,
+      id,
+      initials,
+      model,
+      updateCounts,
+      pickImage,
+    );
     rowHandles.set(squawk.id, handle);
     stack.append(handle.el);
   }
@@ -757,7 +834,7 @@ export async function renderList(
   newRow.input.addEventListener("focus", updateModeBar);
   newRow.input.addEventListener("blur", updateModeBar);
 
-  container.append(header, stack, helpHint, modeBar);
+  container.append(header, stack, helpHint, modeBar, imageFileInput);
   newRow.input.focus();
 
   // Realtime seam
@@ -806,6 +883,90 @@ export async function renderList(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Client-side image resize (bounds upload size, strips EXIF, normalizes format)
+// ---------------------------------------------------------------------------
+
+/** A decoded image plus the metadata + teardown a canvas draw needs. */
+interface DecodedImage {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup(): void;
+}
+
+/** Decode a picked file to a drawable source. Prefers `createImageBitmap`. */
+async function decodeImage(file: Blob): Promise<DecodedImage> {
+  // createImageBitmap decodes most platform-supported formats (incl. HEIC on
+  // Apple devices) without a DOM node.
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      cleanup: () => bitmap.close(),
+    };
+  }
+  // Fallback: object URL + <img>, revoked once drawn.
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("image decode failed"));
+      img.src = url;
+    });
+    return {
+      source: img,
+      width: img.naturalWidth,
+      height: img.naturalHeight,
+      cleanup: () => URL.revokeObjectURL(url),
+    };
+  } catch (err) {
+    // Decode failed before we could hand back a cleanup — revoke here so the
+    // object URL doesn't leak for the document's lifetime.
+    URL.revokeObjectURL(url);
+    throw err;
+  }
+}
+
+/**
+ * Re-encode a picked image file as a bounded JPEG via a `<canvas>`. Scales the
+ * longest edge down to {@link IMAGE_MAX_EDGE}, which caps the payload; the
+ * re-encode also drops EXIF/GPS metadata (a privacy win on phone photos) and
+ * normalizes odd source formats to JPEG. Rejects if the browser can't decode
+ * the file or lacks a 2D context.
+ */
+async function resizeImageToBlob(file: Blob): Promise<Blob> {
+  const decoded = await decodeImage(file);
+  try {
+    const { width, height } = fitWithin(
+      decoded.width,
+      decoded.height,
+      IMAGE_MAX_EDGE,
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("2D canvas context unavailable");
+    }
+    ctx.drawImage(decoded.source, 0, 0, width, height);
+    return await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) =>
+          blob ? resolve(blob) : reject(new Error("canvas toBlob returned null")),
+        "image/jpeg",
+        IMAGE_QUALITY,
+      );
+    });
+  } finally {
+    decoded.cleanup();
+  }
+}
+
 /** Build the always-empty new-squawk row (row 0). */
 function buildNewRow(): { el: HTMLElement; input: HTMLInputElement } {
   const el = document.createElement("div");
@@ -834,6 +995,10 @@ interface RowHandle {
   setText(text: string): void;
   setState(state: SquawkState): void;
   setRecorder(initials: string): void;
+  /** Reflect a (possibly remote) `has_image` change onto the thumbnail. */
+  setHasImage(has: boolean): void;
+  /** Force-show this row's image, cache-busted — after a local attach/replace. */
+  refreshImage(): void;
   flushSave(): void;
   cancelSave(): void;
 }
@@ -844,6 +1009,7 @@ function buildSquawkRow(
   initials: string,
   model: Map<number, Squawk>,
   onChange: () => void,
+  onPickImage: (squawkId: number) => void,
 ): RowHandle {
   const row = document.createElement("div");
   row.className = `squawk-row ${stateClass(squawk.state)}`;
@@ -906,7 +1072,82 @@ function buildSquawkRow(
   recorder.className = "squawk-row__recorder mono";
   setRecorderText(recorder, squawk.initials);
 
-  row.append(seq, input, select, recorder);
+  // --- Image affordance: capture/upload button + optional thumbnail ---
+  // The file <input> is NOT per-row — a single shared one lives in `renderList`
+  // so each squawk row keeps exactly one <input> (its text box). The 📷 button
+  // just asks `renderList` to open that picker targeting this squawk.
+  const imageCell = document.createElement("div");
+  imageCell.className = "squawk-row__image";
+
+  const attachBtn = document.createElement("button");
+  attachBtn.type = "button";
+  attachBtn.className = "squawk-row__image-btn";
+  attachBtn.title = "Attach a photo";
+  attachBtn.textContent = "📷";
+  attachBtn.setAttribute("aria-label", `Attach a photo to squawk ${squawk.seq}`);
+  attachBtn.addEventListener("click", () => onPickImage(squawk.id));
+
+  const thumbLink = document.createElement("a");
+  thumbLink.className = "squawk-row__thumb-link";
+  thumbLink.target = "_blank";
+  thumbLink.rel = "noopener";
+  thumbLink.hidden = true;
+
+  const thumb = document.createElement("img");
+  thumb.className = "squawk-row__thumb";
+  thumb.alt = `Photo on squawk ${squawk.seq}`;
+  thumb.loading = "lazy";
+  thumbLink.append(thumb);
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "squawk-row__image-remove";
+  removeBtn.title = "Remove photo";
+  removeBtn.textContent = "×";
+  removeBtn.setAttribute("aria-label", `Remove photo from squawk ${squawk.seq}`);
+  removeBtn.hidden = true;
+
+  let imageShown = false;
+
+  // Show the thumbnail. `bust` forces a fresh fetch (after a local attach/replace,
+  // where the URL is unchanged but the bytes are not); a plain reflect of a
+  // remote flag doesn't need it.
+  function showImage(bust: boolean): void {
+    const base = squawkImageUrl(squawk.id);
+    thumb.src = bust ? `${base}?t=${Date.now()}` : base;
+    thumbLink.href = base;
+    thumbLink.hidden = false;
+    removeBtn.hidden = false;
+    attachBtn.title = "Replace photo";
+    imageShown = true;
+  }
+
+  function hideImage(): void {
+    thumb.removeAttribute("src");
+    thumbLink.hidden = true;
+    removeBtn.hidden = true;
+    attachBtn.title = "Attach a photo";
+    imageShown = false;
+  }
+
+  removeBtn.addEventListener("click", () => {
+    removeBtn.disabled = true;
+    deleteSquawkImage(squawk.id)
+      .then(() => {
+        const current = model.get(squawk.id);
+        if (current) model.set(squawk.id, { ...current, has_image: false });
+        hideImage();
+      })
+      .catch((err) => console.error("image remove failed", err))
+      .finally(() => {
+        removeBtn.disabled = false;
+      });
+  });
+
+  imageCell.append(attachBtn, thumbLink, removeBtn);
+  if (squawk.has_image) showImage(false);
+
+  row.append(seq, input, select, recorder, imageCell);
 
   return {
     el: row,
@@ -923,6 +1164,13 @@ function buildSquawkRow(
       }
     },
     setRecorder: (init: string): void => setRecorderText(recorder, init),
+    setHasImage: (has: boolean): void => {
+      // Act only on a transition — don't refetch the image on unrelated
+      // text/state updates (a remote replace re-fetches on next reload).
+      if (has && !imageShown) showImage(true);
+      else if (!has && imageShown) hideImage();
+    },
+    refreshImage: (): void => showImage(true),
     flushSave: (): void => save.flush(),
     cancelSave: (): void => {
       save.cancel();

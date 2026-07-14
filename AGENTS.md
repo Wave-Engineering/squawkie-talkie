@@ -70,9 +70,18 @@ the client's `EventSource` applies events through the mounted view's binding.
    are never deleted *that* way — the sole **direct** squawk true-delete is the editor's `u`
    **undo**, which retracts a just-created squawk within the settle-in window
    (`DELETE /api/squawks/:id`, `detail.ts` `doUndo`; a mistake being taken back, not a
-   lifecycle event). (Deleting the *list* cascades its squawks — a separate list-level op.)
-   Don't add any other squawk-delete path.
+   lifecycle event). (Deleting the *list* cascades its squawks, and a squawk cascades its
+   image — `squawk_images.squawk_id` FK `ON DELETE CASCADE`, so undo/list-delete reclaim
+   bytes with no app-level cleanup.) `DELETE /api/squawks/:id/image` removes **only** the
+   image, not the squawk — it is *not* another squawk-delete path. Don't add any other
+   squawk-delete path.
 7. **Initials normalize to ≤3 uppercase alphanumerics**, server-side (`api.ts`) and client (`initials.ts`).
+8. **Squawk images live in-DB, addressed by reference.** One optional image per squawk in
+   the `squawk_images` BLOB table (bytes never inlined into squawk JSON or an SSE frame). The
+   public squawk carries a derived **`has_image`** flag; clients lazy-load
+   `GET /api/squawks/:id/image`. Uploads are a **raster allowlist** (jpeg/png/webp, no SVG),
+   size-capped server-side, and client-resized on a `<canvas>` before upload (bounds size +
+   strips EXIF). Attach/remove broadcast `squawk.updated` — no new SSE event type.
 
 ## Run / test / build
 

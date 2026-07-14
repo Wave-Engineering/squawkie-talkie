@@ -29,7 +29,10 @@ export interface SquawkPatch {
  */
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {};
-  if (init.body !== undefined && init.body !== null) {
+  // Only our JSON bodies (always `JSON.stringify` strings) get a JSON content
+  // type. A Blob body (image upload) is left alone so `fetch` applies the blob's
+  // own type (e.g. image/jpeg) — forcing application/json here would mislabel it.
+  if (typeof init.body === "string") {
     headers["content-type"] = "application/json";
   }
 
@@ -110,4 +113,26 @@ export function updateSquawk(
 /** DELETE /api/squawks/:id — remove a squawk (undo within settle-in window). */
 export function deleteSquawk(id: number): Promise<{ ok: true }> {
   return request<{ ok: true }>(`/api/squawks/${id}`, { method: "DELETE" });
+}
+
+/**
+ * POST /api/squawks/:id/image — attach or replace the squawk's one image. The
+ * body is the raw (already client-resized) blob; `fetch` sets `Content-Type`
+ * from `blob.type`. Returns the updated squawk (`has_image: true`).
+ */
+export function uploadSquawkImage(id: number, blob: Blob): Promise<Squawk> {
+  return request<Squawk>(`/api/squawks/${id}/image`, {
+    method: "POST",
+    body: blob,
+  });
+}
+
+/** DELETE /api/squawks/:id/image — remove only the image (not the squawk). */
+export function deleteSquawkImage(id: number): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/squawks/${id}/image`, { method: "DELETE" });
+}
+
+/** The URL a squawk's image is served from (used directly as an `<img src>`). */
+export function squawkImageUrl(id: number): string {
+  return `/api/squawks/${id}/image`;
 }
