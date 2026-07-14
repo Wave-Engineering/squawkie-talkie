@@ -3,13 +3,24 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request: {}
+  # Backfill: build & publish a tag that was cut before the publish job existed.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag to build & publish to GHCR (e.g. v0.6.0)"
+        required: true
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Validate the exact code being shipped — the tag on a backfill dispatch,
+          # otherwise the triggering commit (identical to checkout's default).
+          ref: ${{ github.event.inputs.ref || github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
@@ -21,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.11"
@@ -33,5 +46,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
       - run: docker build -t squawkie-talkie .
       - run: ./scripts/ci/docker-smoke.sh
+
+  # Publish the container image to the org GHCR on a version tag (or a manual
+  # backfill dispatch). Never runs on PRs or branch pushes. Gated behind the
+  # validation jobs — which now check out the same ref — so a broken build never
+  # ships an image.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    needs: [test, e2e, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wave-engineering/squawkie-talkie
+          # The version tag on both paths; `latest` only on a real tag push, so a
+          # backfill of an older tag never drags `latest` backward.
+          tags: |
+            type=ref,event=tag
+            type=raw,value=${{ github.event.inputs.ref }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
