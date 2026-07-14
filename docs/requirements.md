@@ -63,5 +63,17 @@ implementation; for design see [`architecture.md`](architecture.md).
 
 ## Non-functional
 
-- **R-25** No authentication; trusted-network deployment only (see security posture).
+- **R-25** No *user* authentication and no authorization model; trusted-network deployment
+  only (see security posture). R-28 does not relax this — the reverse proxy remains the
+  security boundary.
 - **R-26** The instance state is the single `squawk.db` file; deleting a list is permanent.
+- **R-28** *Optional* API-token auth on the `/api` surface (REST + `/api/stream`),
+  configured via `SQUAWK_API_TOKEN` or `SQUAWK_API_TOKEN_FILE` (a secret-file path, which
+  wins over the inline var). Disabled unless configured. When enabled it **validates only
+  if an `Authorization` header is present**: a header-absent request passes through, a
+  valid `Bearer` token is accepted (constant-time compare), and a wrong or malformed
+  header is rejected `401`. `/healthz` and static assets are never gated; the token is
+  never logged. The check **fails open**: a missing, unreadable, or empty
+  `SQUAWK_API_TOKEN_FILE` resolves to unconfigured (feature off) rather than crashing, and
+  does not fall back to `SQUAWK_API_TOKEN`. The token is re-resolved per request, so the
+  boot log reports boot-time state only.

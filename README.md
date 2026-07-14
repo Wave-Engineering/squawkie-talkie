@@ -13,7 +13,7 @@ Two concepts only: **Squawk Lists** and **Squawks**.
 
 ## Features
 
-- **Initials-only identity** — prompted once, stored in a cookie. No auth, no accounts.
+- **Initials-only identity** — prompted once, stored in a cookie. No login, no accounts.
 - **Lists screen** — create, open, delete (inline confirm), and **export a list to JSON**.
 - **Squawk editor** — newest-on-top stack; an always-empty top box (type, **Enter**,
   you're on the next line); **autosave** on blur and after 10s idle; per-squawk **state
@@ -63,17 +63,20 @@ Full container notes — persistence, ports, reverse proxy — are in
 > **Production note:** run `bun run build` before serving in prod, and read
 > [`docs/deployment.md`](docs/deployment.md) first — there's one load-bearing
 > reverse-proxy setting for SSE, and a **security posture** you must understand
-> (no auth → trusted network only).
+> (no user auth → trusted network only; the optional `/api` token is an additive
+> machine credential, not a substitute for the proxy).
 
 ## Project layout
 
 ```
 src/server/   index.ts (routing+listen) · api.ts (REST) · db.ts (bun:sqlite) ·
-              sse.ts (realtime broadcast) · types.ts
+              sse.ts (realtime broadcast) · auth.ts (optional API token) · types.ts
 src/client/   app.ts (bootstrap) · lists.ts · detail.ts (editor) · realtime.ts ·
               api.ts (fetch wrappers) · router.ts · initials.ts · cookies.ts
 public/       index.html · styles.css · dist/ (built client, gitignored)
 tests/        unit + happy-dom DOM tests
+e2e/          Playwright specs
+sqtk          agent-facing client CLI (curl/jq wrapper over the JSON API)
 docs/         architecture · requirements · deployment · testing
 ```
 
