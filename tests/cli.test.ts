@@ -90,3 +90,25 @@ test("a seq that isn't in the list is a clear error", () => {
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("no squawk #99");
 });
+
+test("an API command with unset SQUAWK_URL fails loud, never silently hits localhost:3000", () => {
+  // Strip SQUAWK_URL from the child env (it is pinned in the operator's shell).
+  const env = { ...process.env };
+  delete env.SQUAWK_URL;
+  const r = Bun.spawnSync([CLI, "lists"], { env });
+  expect(r.exitCode).not.toBe(0);
+  const err = r.stderr.toString();
+  expect(err).toContain("SQUAWK_URL is not set");
+  // The old footgun default must not reappear.
+  expect(err).not.toContain("localhost:3000");
+});
+
+test("sqtk help works without SQUAWK_URL — reading usage needs no config", () => {
+  const env = { ...process.env };
+  delete env.SQUAWK_URL;
+  const r = Bun.spawnSync([CLI, "help"], { env });
+  expect(r.exitCode).toBe(0);
+  // usage() prints the command list to stderr; it must not demand SQUAWK_URL.
+  expect(r.stderr.toString()).toContain("sqtk — client CLI");
+  expect(r.stderr.toString()).not.toContain("SQUAWK_URL is not set");
+});
