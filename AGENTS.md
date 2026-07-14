@@ -34,7 +34,8 @@ they are never deleted** (`set --state retired`), honoring invariant #6. Symlink
 
 | Area | File | Role |
 |---|---|---|
-| Server entry/routing | `src/server/index.ts` | `routeRequest()` → healthz, `/api/stream`, `handleApi`, static, SPA fallback. `exec`s `Bun.serve` only under `import.meta.main`. |
+| Server entry/routing | `src/server/index.ts` | `routeRequest()` → healthz, optional `/api` token check, `/api/stream`, `handleApi`, static, SPA fallback. `exec`s `Bun.serve` only under `import.meta.main`. |
+| API-token auth | `src/server/auth.ts` | `resolveApiToken()`, `checkApiToken(req)` → `null` (allow) or `401`. Optional + additive; see the auth bullet below. |
 | REST API | `src/server/api.ts` | `handleApi(req,url)` returns `null` for non-`/api` paths; `routeApi` dispatches. |
 | Data layer | `src/server/db.ts` | `bun:sqlite`; **lazy** `getDb()`; typed repo fns. |
 | Realtime (server) | `src/server/sse.ts` | subscriber set; `subscribe()`, `broadcast()`, `shutdown()`. |
@@ -45,9 +46,9 @@ they are never deleted** (`set --state retired`), honoring invariant #6. Symlink
 | Realtime (client) | `src/client/realtime.ts` | `EventSource`; `applyEvent`; focused-box rule. |
 | Fetch wrappers | `src/client/api.ts` | typed `/api` calls; throw on non-2xx. |
 
-**Request flow:** browser → `routeRequest` → (`/api/stream` SSE | `handleApi` REST |
-static | `index.html`). Mutations in `api.ts` call `broadcast()`; the client's
-`EventSource` applies events through the mounted view's binding.
+**Request flow:** browser → `routeRequest` → [optional `/api` token check] → (`/api/stream`
+SSE | `handleApi` REST | static | `index.html`). Mutations in `api.ts` call `broadcast()`;
+the client's `EventSource` applies events through the mounted view's binding.
 
 ## Load-bearing invariants — do NOT break these
 
@@ -91,7 +92,14 @@ bun run build      # → public/dist/app.js (run before prod serve)
   branch up to date before a squash merge (`.github/workflows/ci.yml`). No merge queue.
   Don't add >5 procedural lines to CI YAML — use a script (see CLAUDE.md).
 - **SSE behind a proxy needs buffering OFF** (see `docs/deployment.md`) or realtime dies silently.
-- **No auth.** Initials are a label, not identity. Trusted-network tool only.
+- **No user auth.** Initials are a label, not identity — any viewer can edit or delete any
+  list. Trusted-network tool; the reverse proxy is the real boundary.
+- **`/api` has an *optional* bearer-token gate** (`src/server/auth.ts`), OFF unless
+  `SQUAWK_API_TOKEN`/`_FILE` is set. It **validates only if an `Authorization` header is
+  present** — a header-absent request passes through (native `EventSource` can't send
+  headers, so a mandatory gate would break browser SSE). `/healthz` and static assets are
+  never gated. It's an alternative credential for machine clients, **not** a standalone
+  boundary. Full contract: `docs/deployment.md` § *Optional API-token auth*.
 
 ## Common changes — where to start
 

@@ -4,7 +4,7 @@
 
 Squawkie-Talkie is one self-contained Bun process that serves a vanilla-TypeScript
 single-page client and a JSON + Server-Sent-Events API backed by a `bun:sqlite` file.
-No external services, no build-time framework, no auth.
+No external services, no build-time framework, no user accounts.
 
 ```
 ┌── browser ───────────────┐         ┌── Bun process ─────────────────────────┐
@@ -19,8 +19,10 @@ No external services, no build-time framework, no auth.
 ```
 
 **Request flow:** every request enters `routeRequest` (`src/server/index.ts`), checked in
-order: `GET /healthz` → `GET /api/stream` (SSE) → `handleApi` (returns `null` for
-non-`/api` paths) → static asset under `public/` → `index.html` SPA fallback.
+order: `GET /healthz` → optional `/api/` token check (`auth.ts`; a no-op unless configured)
+→ `GET /api/stream` (SSE) → `handleApi` (returns `null` for non-`/api` paths) → static asset
+under `public/` → `index.html` SPA fallback. The token check sits after `/healthz` and
+before the stream so it covers REST *and* SSE while leaving healthz and static assets open.
 
 ## Data model
 
@@ -93,11 +95,24 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 
 ## Security posture
 
-**No authentication. Initials are a label, not an identity** — anyone can type "BJ", and
+**No user authentication. Initials are a label, not an identity** — anyone can type "BJ", and
 any viewer can edit or delete any list. Combined with **last-write-wins**, concurrent
-edits silently overwrite. This is by design for a small, trusted team tool.
+edits silently overwrite. This is by design for a small, trusted team tool. There is also
+no authorization model: every caller who reaches the API can do everything.
+
+**Optional API-token check (v0.5.0).** `src/server/auth.ts` can *validate* a bearer token on
+the `/api` surface (REST + SSE) via `SQUAWK_API_TOKEN` / `SQUAWK_API_TOKEN_FILE`. It never
+**requires** one: enforcement is **additive** — the token is checked *only if* an
+`Authorization` header is present, so a header-absent request always passes through. There
+is no configuration under which the token becomes mandatory. That asymmetry is deliberate —
+native `EventSource` cannot set request headers, so a mandatory token would break the
+browser's realtime feed. `/healthz` and static assets are never checked. Read it as *an
+alternative credential a machine client may present* (curl, or a fetch-based SSE reader),
+**not** as the security boundary. Note the bundled `sqtk` CLI does **not** send the header
+today — like the browser, it relies on the header-absent pass-through.
 
 **Deploy on a trusted internal network only — never expose to the public internet.** See
 [`deployment.md`](deployment.md) for the operational consequences (and the SSE reverse-proxy
-setting). If wider exposure is ever needed, authentication and an authorization model are
-prerequisites and are explicitly out of current scope.
+setting). The real boundary is and remains the reverse proxy. If wider exposure is ever
+needed, *mandatory* authentication and an authorization model are prerequisites, and both
+are explicitly out of current scope.

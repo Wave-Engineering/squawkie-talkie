@@ -7,7 +7,7 @@ to the numbered behaviors in [`requirements.md`](requirements.md).
 
 | Tier | Tool | Scope | Status |
 |---|---|---|---|
-| **Unit** | `bun test` | Pure logic — `db.ts` repo fns, `countByState`, `debounce`, `onEnter`, `normalizeInitials`, `shouldApplyToInput`, `exportFilename`, API routing/validation. | **In place** |
+| **Unit** | `bun test` | Pure logic — `db.ts` repo fns, `countByState`, `debounce`, `onEnter`, `normalizeInitials`, `shouldApplyToInput`, `exportFilename`, API routing/validation, and the optional API-token check (`tests/auth.test.ts` → R-28). | **In place** |
 | **Component / DOM** | `bun test` + happy-dom | Rendered-DOM behavior — focus/keyboard, arrow nav, Esc, counts, hover badge, focused-input/select protection, export wiring. | **In place** |
 | **End-to-end** | Playwright | Real browser, real server, real cookies/SSE; cross-tab realtime via two browser contexts. | **In place** |
 | **Manual** | human | Visual/UX judgment only — does the cyberpunk look land, does it *feel* right. | Checklist below |

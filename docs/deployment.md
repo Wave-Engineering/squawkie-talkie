@@ -52,6 +52,20 @@ The rule is **additive — validate only if a header is present**:
 - `Authorization` present ⇒ a `Bearer` token matching the configured one is
   allowed (constant-time compare); a wrong or malformed header ⇒ `401`.
 
+> **Operational trap — the check fails OPEN.** If `SQUAWK_API_TOKEN_FILE` is set
+> but the file is missing, unreadable, **or empty** (a typo'd path, an unmounted
+> secret, a secret created but never populated), the token resolves to
+> "unconfigured" and the feature is silently **disabled**. It does **not** fall
+> back to `SQUAWK_API_TOKEN`, even when that is also set.
+>
+> The boot line is the only signal, and it reports **boot time only**. The token is
+> re-resolved on every request (deliberately — so the operator can rotate the secret
+> without a restart), so a secret file that disappears or empties *after* startup
+> disables the check at runtime with no log line at all, while the boot line still
+> reads `ENABLED`. After wiring a Docker/Swarm secret, confirm the log reads
+> `API-token auth: ENABLED` — and treat a live wrong-token probe (expect `401`) as
+> the only real proof the check is still on.
+
 Because header-absent requests pass through, **the token is an *alternative*
 credential, not a standalone gate** — it does not lock down the API on its own.
 The real boundary must still be a trusted reverse proxy / internal network (see
@@ -124,8 +138,11 @@ image); only the left-hand host port changes.
 The [SSE buffering gotcha](#reverse-proxy--the-sse-gotcha) below is unchanged —
 point your proxy at the published host port and disable buffering for
 `/api/stream`. And the container removes **no** security constraint: there's
-still no auth, so keep it on a trusted internal network and never publish port
-3000 to the public internet.
+still no user auth and no authorization model, so keep it on a trusted internal
+network and never publish port 3000 to the public internet. Setting
+`SQUAWK_API_TOKEN` does not change this — the token is additive (it only rejects
+a *bad* `Authorization` header, never a missing one), so it is not a substitute
+for the proxy.
 
 ## Reverse proxy — the SSE gotcha
 
