@@ -7,6 +7,57 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-14 — Photos on squawks & live connection status
+
+### Added
+- **Photos on squawks** — attach an optional single image to a squawk, captured
+  from a phone camera (`<input capture>`) or uploaded from any device. Bytes are
+  stored **in SQLite** (a 1:1 `squawk_images` BLOB table, `ON DELETE CASCADE`) so
+  the "instance = one file" backup/expunge story holds and undo/list-delete
+  reclaim bytes for free. Images are addressed by reference
+  (`GET /api/squawks/:id/image`), never inlined into squawk JSON or an SSE frame;
+  the public squawk carries a derived `has_image` flag. Uploads are a strict
+  raster allowlist (jpeg/png/webp — no SVG), size-capped server-side, and
+  client-resized on a `<canvas>` before upload (bounds size, strips EXIF/GPS,
+  normalizes HEIC). Export stays text-only for now (#113).
+- **Live connection indicator** — the header shows realtime liveness on theme:
+  a subtle **on air** when the SSE stream is live, an amber **off air ·
+  reconnecting…** when it drops (after a 2s grace), and a **back on air** flash
+  on recovery. Because SSE has no replay, a reconnect **resyncs** the active view
+  — re-fetching and reconciling anything missed while offline without clobbering
+  a focused control — so "back on air" means actually caught up. The off-air copy
+  is worst-case honest ("changes may not be saved"), covering both an SSE-only
+  drop and a full-server outage (#116).
+
+### Fixed
+- **Realtime no longer silently dies on idle** — `Bun.serve`'s default
+  `idleTimeout` (10s) was *shorter* than the SSE heartbeat (25s), so every
+  `/api/stream` connection was killed before it could heartbeat, then reconnected
+  and killed again — dropping any event broadcast during the gaps. Raised
+  `idleTimeout` well above the heartbeat, and the server now flushes an initial
+  `: connected` comment on subscribe so the client's `open` fires promptly rather
+  than waiting for the first heartbeat (#115, #116).
+- **Lists sort newest-first** — the Lists screen showed the oldest list on top;
+  it now renders newest-first on initial load, local create, and realtime create,
+  matching the detail view's newest-first squawks (#118).
+- **`?` keymap overlay deflake** — dismiss listeners now attach synchronously and
+  ignore the opening event by identity, closing a `setTimeout(0)` race that could
+  swallow a fast dismiss keypress (#108).
+- **`sqtk` requires `SQUAWK_URL`** — the CLI now fails loud when `SQUAWK_URL` is
+  unset instead of silently talking to `localhost:3000`; `sqtk help` still works
+  config-free (#97).
+
+### Docs
+- Purged stale merge-queue claims — `main` was never queue-enforced (#102).
+- Corrected the "No auth" claim — v0.5.0 shipped optional API-token auth (#104).
+- Corrected the squawk-delete invariant — the `u` undo is a real true-delete of a
+  just-created squawk, not a lifecycle event (#105).
+
+### Internal
+- **Doc-drift guard** — a `test` check now fails if `docs/architecture.md`'s API
+  reference or SSE-events line drifts from the routes/events the server actually
+  registers (#111).
+
 ## [0.5.0] — 2026-07-11 — API-token auth & the sqtk client CLI
 
 ### Added
