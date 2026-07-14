@@ -31,6 +31,47 @@ async function seedLists(page: Page, names: string[]): Promise<void> {
 }
 
 test.describe("Vi-mode: lists-page nav", () => {
+  test("lists render newest-first — most recently created on top (#118)", async ({
+    seededPage: page,
+  }) => {
+    await clearLists(page);
+    // Created oldest → newest; the API returns them id-ascending.
+    await page.request.post("/api/lists", { data: { name: "Older" } });
+    await page.request.post("/api/lists", { data: { name: "Newer" } });
+    await page.goto("/");
+
+    const rows = page.locator(".list-row");
+    await expect(rows).toHaveCount(2);
+    // Newest on top (top row is index 0), oldest below.
+    await expect(rows.nth(0).locator(".list-row__open")).toHaveText("Newer");
+    await expect(rows.nth(1).locator(".list-row__open")).toHaveText("Older");
+  });
+
+  test("a realtime list arriving during NAV keeps focus on the highlighted row (#118)", async ({
+    seededPage: page,
+  }) => {
+    await seedLists(page, ["A", "B", "C"]); // newest-first DOM: C, B, A
+
+    await page.keyboard.press("ArrowDown"); // focus top row (C)
+    await page.keyboard.press("j"); // focus middle row (B)
+    const focused = page.locator(".list-row--nav-focus");
+    await expect(focused.locator(".list-row__open")).toHaveText("B");
+    const focusedId = await focused.getAttribute("data-list-id");
+
+    // A remote list.created arrives: the POST broadcasts to this page's own SSE,
+    // so upsertList prepends "D" on top, shifting every existing row down one.
+    await page.request.post("/api/lists", { data: { name: "D" } });
+    await expect(page.locator(".list-row")).toHaveCount(4);
+
+    // Focus stayed visually on B — and Enter must open B, not a shifted neighbour
+    // (regression: a prepend that didn't bump focusedIndex would open the wrong list).
+    await expect(
+      page.locator(".list-row--nav-focus").locator(".list-row__open"),
+    ).toHaveText("B");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(new RegExp(`#/list/${focusedId}$`));
+  });
+
   test("fresh load auto-focuses the new-list input — nav works with no manual click", async ({
     seededPage: page,
   }) => {
