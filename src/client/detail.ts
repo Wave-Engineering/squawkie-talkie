@@ -484,7 +484,7 @@ export async function renderList(
     }
     if (key === "?") {
       event.preventDefault();
-      showKeymapOverlay();
+      showKeymapOverlay(event);
       return;
     }
 
@@ -581,7 +581,7 @@ export async function renderList(
   // --- Keymap overlay ---
   let overlayEl: HTMLElement | null = null;
 
-  function showKeymapOverlay(): void {
+  function showKeymapOverlay(openingEvent?: Event): void {
     if (overlayEl) return;
     overlayEl = document.createElement("div");
     overlayEl.className = "keymap-overlay";
@@ -606,17 +606,21 @@ export async function renderList(
     `;
     container.append(overlayEl);
 
-    const dismiss = (): void => {
+    // Any key or click closes the overlay — except the very keydown/click that
+    // opened it. Openers run in the capture phase (on `stack`) or on the help
+    // hint, so that same event bubbles up to `document` after we attach here;
+    // ignore it by identity. Comparing the event object — dispatched exactly
+    // once — is race-free, unlike the old setTimeout(0), which left a macrotask
+    // window in which a fast dismiss keypress was silently lost (#108).
+    const dismiss = (event: Event): void => {
+      if (event === openingEvent) return;
       overlayEl?.remove();
       overlayEl = null;
       document.removeEventListener("keydown", dismiss);
       document.removeEventListener("click", dismiss);
     };
-    // Use setTimeout so the '?' keydown that opened it doesn't immediately close
-    setTimeout(() => {
-      document.addEventListener("keydown", dismiss, { once: true });
-      document.addEventListener("click", dismiss, { once: true });
-    }, 0);
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("click", dismiss);
   }
 
   // --- Row 0: the always-empty new-squawk input ---

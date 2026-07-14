@@ -426,7 +426,7 @@ export function renderLists(container: HTMLElement): void {
     }
     if (key === "?" && rowEls.length > 0) {
       event.preventDefault();
-      showKeymapOverlay();
+      showKeymapOverlay(event);
       return;
     }
     if ((key === "d" || key === "y") && focusedIndex >= 0) {
@@ -447,7 +447,7 @@ export function renderLists(container: HTMLElement): void {
     }
     if (event.key === "?" && formInput.value.length === 0) {
       event.preventDefault();
-      showKeymapOverlay();
+      showKeymapOverlay(event);
       return;
     }
   });
@@ -540,7 +540,7 @@ export function renderLists(container: HTMLElement): void {
   }
 
   // --- Keymap overlay ---
-  function showKeymapOverlay(): void {
+  function showKeymapOverlay(openingEvent?: Event): void {
     if (overlayEl) return;
     overlayEl = document.createElement("div");
     overlayEl.className = "keymap-overlay";
@@ -562,7 +562,18 @@ export function renderLists(container: HTMLElement): void {
       </div>`;
     container.append(overlayEl);
 
-    function dismiss(): void {
+    // Any key or click closes the overlay — except the very keydown/click that
+    // opened it. Openers run in the capture phase (on the rows list), on the
+    // input, or on the help hint, so that same event bubbles up to `document`
+    // after we attach here; ignore it by identity. Comparing the event object —
+    // dispatched exactly once — is race-free, unlike the old setTimeout(0),
+    // which left a macrotask window in which a fast dismiss keypress was
+    // silently lost (#108).
+    const dismiss = (event: Event): void => {
+      if (event === openingEvent) return;
+      teardown();
+    };
+    function teardown(): void {
       overlayEl?.remove();
       overlayEl = null;
       document.removeEventListener("keydown", dismiss);
@@ -570,21 +581,20 @@ export function renderLists(container: HTMLElement): void {
     }
 
     // Replay this surface's tour from the `?` overlay (ignores the seen-flag).
-    // Stop propagation so the overlay's own dismiss-on-click does not also fire;
-    // dismiss it explicitly, then hand off to the engine.
+    // Tear the overlay down explicitly, then hand off to the engine. teardown()
+    // removes the document dismiss listener, so the bubbling click can't
+    // re-trigger it; stopPropagation is belt-and-suspenders.
     const replayBtn = overlayEl.querySelector<HTMLButtonElement>(
       ".keymap-overlay__replay",
     );
     replayBtn?.addEventListener("click", (event) => {
       event.stopPropagation();
-      dismiss();
+      teardown();
       replayTour(SURFACE, buildTourSteps());
     });
 
-    setTimeout(() => {
-      document.addEventListener("keydown", dismiss, { once: true });
-      document.addEventListener("click", dismiss, { once: true });
-    }, 0);
+    document.addEventListener("keydown", dismiss);
+    document.addEventListener("click", dismiss);
   }
 
   // Help hint in the corner
