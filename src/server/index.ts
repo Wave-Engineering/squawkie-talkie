@@ -91,6 +91,16 @@ export const fetch = routeRequest;
 if (import.meta.main) {
   const server = Bun.serve({
     port: Number(process.env.PORT ?? 3000),
+    // SSE streams (`/api/stream`) are long-lived and mostly idle between events.
+    // Bun's default idleTimeout is 10s — SHORTER than sse.ts's 25s heartbeat — so
+    // every stream was killed before it could heartbeat, silently dropping
+    // realtime events during the reconnect gaps (#115). This must stay comfortably
+    // above HEARTBEAT_MS (25s) so the heartbeat resets the idle timer; 120s (of
+    // Bun's 255s max) leaves a wide margin while still bounding a hung request.
+    // Applied globally (not per-request via server.timeout) deliberately: a small
+    // self-hosted tool doesn't need the tighter default on non-SSE requests, and
+    // one config value is simpler to reason about.
+    idleTimeout: 120,
     fetch: routeRequest,
   });
   console.log(`squawkie-talkie listening on http://localhost:${server.port}`);

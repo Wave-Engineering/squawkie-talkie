@@ -83,6 +83,9 @@ export function broadcast(event: SseEvent): void {
 
 // Heartbeat: a periodic comment line keeps idle connections open through
 // intermediaries that would otherwise close a silent stream.
+// MUST stay below the server's Bun.serve `idleTimeout` (index.ts) — the heartbeat
+// resets that idle timer; if it fires slower than the timeout, Bun kills the
+// stream before it can heartbeat and realtime events are dropped (#115).
 const HEARTBEAT_MS = 25_000;
 const heartbeat = setInterval(() => {
   for (const controller of [...subscribers]) {
