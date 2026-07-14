@@ -134,8 +134,19 @@ export function renderLists(container: HTMLElement): void {
     if (model.some((l) => l.id === list.id)) {
       return; // already shown — keep create idempotent (realtime + initial load)
     }
-    model.push(list);
-    rows.append(buildRow(list));
+    // Newest-first: prepend so the most recent list sits on top, matching the
+    // detail view's newest-first squawks. model and DOM both take the new list at
+    // index 0, so they stay index-aligned. But a prepend shifts every existing
+    // row down one, and NAV focus is a numeric `focusedIndex` — so bump it to keep
+    // focus / dd / yy pointing at the still-highlighted row when a realtime list
+    // arrives mid-nav (the mirror of adjustFocusAfterRemoval's decrement). The
+    // initial ASC load prepended yields newest-on-top; local + realtime create
+    // also land on top. (#118)
+    model.unshift(list);
+    rows.prepend(buildRow(list));
+    if (focusedIndex >= 0) {
+      focusedIndex++;
+    }
     syncEmpty();
   }
 
