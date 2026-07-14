@@ -6,6 +6,7 @@
  * 3. On an empty instance, require a first list before proceeding (#71).
  * 4. Register the real view renderers, then start the hash router.
  */
+import { mountConnStatus } from "./connstatus.ts";
 import { ensureFirstList, ensureInitials } from "./initials.ts";
 import { renderLists } from "./lists.ts";
 import { connect } from "./realtime.ts";
@@ -19,6 +20,13 @@ async function main(): Promise<void> {
   const slot = document.getElementById("initials-slot");
   if (slot) {
     slot.textContent = initials;
+  }
+
+  // Connection-status indicator (#116): app-level chrome, so it persists across
+  // list↔detail navigation. Sits left of the initials badge.
+  const header = document.querySelector<HTMLElement>(".app-header");
+  if (header) {
+    mountConnStatus(header, slot);
   }
 
   // Empty-system bootstrap (#71): block on naming a first list while the whole

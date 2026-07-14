@@ -56,6 +56,12 @@ export function subscribe(): Response {
     start(controller) {
       self = controller;
       subscribers.add(controller);
+      // Flush an initial comment immediately. Bun doesn't send the response
+      // headers until the first byte is written, so without this the client's
+      // EventSource wouldn't fire `open` until the first real event or the ~25s
+      // heartbeat — leaving the connection-status indicator stuck on "connecting"
+      // on an idle stream. A `:` comment is ignored by EventSource. (#116)
+      write(controller, ": connected\n\n");
     },
     cancel() {
       subscribers.delete(self);

@@ -42,7 +42,7 @@ import {
   type CoachStep,
 } from "./coachmarks.ts";
 import { ensureInitials } from "./initials.ts";
-import { setActiveView } from "./realtime.ts";
+import { activeSquawkId, setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
 
 /** The lifecycle states a squawk may be set to, in dropdown order. */
@@ -844,6 +844,31 @@ export async function renderList(
     upsertSquawk: (squawk) => insertSquawk(squawk),
     patchSquawk,
     removeSquawk: (sqId) => removeSquawkRow(sqId),
+    // On reconnect: re-fetch this list and reconcile what changed while offline,
+    // without clobbering the control the viewer is actively editing (invariant #1).
+    resync: async () => {
+      let fresh: ListDetail;
+      try {
+        fresh = await getList(id);
+      } catch {
+        return; // leave rows as-is; the indicator already signals the problem
+      }
+      const activeId = activeSquawkId(document.activeElement);
+      const freshIds = new Set(fresh.squawks.map((s) => s.id));
+      // Iterate oldest-first: `getList` is newest-first but `insertSquawk`
+      // prepends, so inserting oldest-first leaves a missed batch newest-on-top
+      // (matching the live single-event path). Patches are order-independent.
+      for (const squawk of [...fresh.squawks].reverse()) {
+        if (rowHandles.has(squawk.id)) {
+          patchSquawk(squawk, squawk.id !== activeId);
+        } else {
+          insertSquawk(squawk);
+        }
+      }
+      for (const sid of [...rowHandles.keys()]) {
+        if (!freshIds.has(sid)) removeSquawkRow(sid);
+      }
+    },
   });
 
   // --- First-run coaching (Epic #69, Story #73) ---

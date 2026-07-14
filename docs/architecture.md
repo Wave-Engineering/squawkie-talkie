@@ -56,11 +56,17 @@ lists                              squawks                          squawk_image
 
 Server→client is **Server-Sent Events** (`GET /api/stream`); client→server is ordinary
 `POST`/`PATCH`/`DELETE`. After each successful mutation the API calls `broadcast()`, which
-writes a framed `data: {…}\n\n` event to every subscriber. A ~25s heartbeat keeps idle
-connections alive.
+writes a framed `data: {…}\n\n` event to every subscriber. On subscribe the server flushes an
+initial `: connected` comment so the client's `EventSource` fires `open` immediately — Bun
+withholds response headers until the first byte, which would otherwise delay `open` (and the
+connection indicator) until the ~25s heartbeat. That **~25s heartbeat** then keeps idle
+connections alive, and must stay below the server's `idleTimeout` (see `deployment.md`).
 
 The client (`realtime.ts`) holds one `EventSource` and applies each event through the
-currently-mounted view's binding. **Last-write-wins**, with one rule: a remote update is
+currently-mounted view's binding. It also surfaces connection liveness in the header — an
+on-air / off-air indicator (`connstatus.ts`) — and, since SSE has **no replay**, re-fetches
+and reconciles the active view on reconnect to recover events missed while offline (a focused
+control is never clobbered — invariant below). **Last-write-wins**, with one rule: a remote update is
 **never applied to the control the viewer is actively in** — `shouldApplyToInput` checks
 `document.activeElement`'s `data-squawk-id`; the focused text input and the focused state
 `<select>` are left untouched (their own next change is the last write). This is the single

@@ -46,7 +46,8 @@ undo (invariant #6), which `sqtk` does not expose. Symlink `sqtk` onto
 | Client bootstrap | `src/client/app.ts` | initials → register views → router → connect SSE. |
 | Lists screen | `src/client/lists.ts` | create/open/delete-confirm/**export**. |
 | Squawk editor | `src/client/detail.ts` | the heart: stack, autosave, states, counts, keyboard. |
-| Realtime (client) | `src/client/realtime.ts` | `EventSource`; `applyEvent`; focused-box rule. |
+| Realtime (client) | `src/client/realtime.ts` | `EventSource`; `applyEvent`; focused-box rule; connection-status store + resync-on-reconnect. |
+| Connection status | `src/client/connstatus.ts` | header on-air/off-air indicator; subscribes to `realtime.ts` status. |
 | Fetch wrappers | `src/client/api.ts` | typed `/api` calls; throw on non-2xx. |
 
 **Request flow:** browser → `routeRequest` → [optional `/api` token check] → (`/api/stream`

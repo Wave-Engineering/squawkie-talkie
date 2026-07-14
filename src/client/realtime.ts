@@ -47,6 +47,11 @@ export interface ListsViewBinding {
   upsertList(list: List): void;
   /** Remove the list's row if present. */
   removeList(id: number): void;
+  /**
+   * Re-fetch and reconcile this view after an SSE reconnect. SSE has no replay,
+   * so events missed while offline are only recoverable by re-fetching. Idempotent.
+   */
+  resync?(): void | Promise<void>;
 }
 
 /** The list-detail screen's realtime sink. Operations are idempotent. */
@@ -65,6 +70,12 @@ export interface DetailViewBinding {
   patchSquawk(squawk: Squawk, applyToInput: boolean): void;
   /** Remove a squawk's row (undo/delete). */
   removeSquawk(id: number): void;
+  /**
+   * Re-fetch and reconcile this view after an SSE reconnect. SSE has no replay,
+   * so events missed while offline are only recoverable by re-fetching. Must not
+   * clobber a control the viewer is actively editing (invariant #1).
+   */
+  resync?(): void | Promise<void>;
 }
 
 /** Whichever view is presently mounted, or none. */
@@ -80,6 +91,43 @@ export function setActiveView(binding: ViewBinding | null): void {
 /** The realtime sink for the currently-mounted view, or null. */
 export function activeView(): ViewBinding | null {
   return active;
+}
+
+// ---------------------------------------------------------------------------
+// Connection status (drives the on-air / off-air indicator)
+// ---------------------------------------------------------------------------
+
+/**
+ * Liveness of the realtime channel:
+ *  - `connecting` — before the first `open` (or an initial connect in progress)
+ *  - `online`     — the SSE stream is open; changes flow live
+ *  - `offline`    — the stream dropped and reconnection is failing (surfaced only
+ *                   after a short grace so a quick reconnect doesn't strobe)
+ */
+export type ConnStatus = "connecting" | "online" | "offline";
+
+let connStatus: ConnStatus = "connecting";
+const connSubs = new Set<(s: ConnStatus) => void>();
+
+/** Grace before a dropped stream is surfaced as `offline` (avoid strobing quick reconnects). */
+const OFFLINE_GRACE_MS = 2_000;
+
+/** Current realtime connection status. */
+export function connectionStatus(): ConnStatus {
+  return connStatus;
+}
+
+/** Subscribe to connection-status changes; emits the current status immediately. Returns an unsubscribe. */
+export function onConnectionStatus(fn: (s: ConnStatus) => void): () => void {
+  connSubs.add(fn);
+  fn(connStatus);
+  return () => connSubs.delete(fn);
+}
+
+function setConnStatus(next: ConnStatus): void {
+  if (next === connStatus) return;
+  connStatus = next;
+  for (const fn of [...connSubs]) fn(next);
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +260,43 @@ export function dispatch(event: RealtimeEvent): void {
  */
 export function connect(handler: Dispatch = dispatch): EventSource {
   const source = new EventSource("/api/stream");
+
+  // Reconnect grace: EventSource fires `error` on every dropped/failed attempt
+  // and auto-retries. Only surface `offline` if we stay down past the grace, so
+  // a quick reconnect doesn't strobe the indicator.
+  let offlineTimer: ReturnType<typeof setTimeout> | null = null;
+  // Whether the stream dropped since the last successful `open`. Drives the
+  // resync independently of the indicator's offline grace, so a reconnect that
+  // races inside the grace window still recovers missed events (SSE has no replay).
+  let droppedSinceOpen = false;
+
+  source.addEventListener("open", () => {
+    if (offlineTimer !== null) {
+      clearTimeout(offlineTimer);
+      offlineTimer = null;
+    }
+    const wasDropped = droppedSinceOpen;
+    droppedSinceOpen = false;
+    setConnStatus("online");
+    // Reconnected after a drop: SSE has no replay, so re-fetch the active view
+    // to recover anything broadcast while we were disconnected.
+    if (wasDropped) {
+      void active?.resync?.();
+    }
+  });
+
+  source.addEventListener("error", () => {
+    droppedSinceOpen = true;
+    // Already offline, or the grace timer is running — nothing to schedule.
+    if (connStatus === "offline" || offlineTimer !== null) {
+      return;
+    }
+    offlineTimer = setTimeout(() => {
+      offlineTimer = null;
+      setConnStatus("offline");
+    }, OFFLINE_GRACE_MS);
+  });
+
   source.addEventListener("message", (ev) => {
     let event: RealtimeEvent;
     try {
@@ -222,5 +307,6 @@ export function connect(handler: Dispatch = dispatch): EventSource {
     }
     handler(event);
   });
+
   return source;
 }
