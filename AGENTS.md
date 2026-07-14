@@ -87,7 +87,8 @@ bun run build      # → public/dist/app.js (run before prod serve)
 - **Vanilla TS client — do not add a framework.** The focus/cursor control depends on
   owning the DOM; surgical, id-keyed row updates are the seam realtime patches.
 - **TS is strict + `verbatimModuleSyntax`** — use `import type` for type-only imports.
-- **`main` is merge-queue enforced**; CI must stay `merge_group`-aware (`.github/workflows/ci.yml`).
+- **`main` is protected by required checks** — `test`, `e2e`, `docker` must be green and the
+  branch up to date before a squash merge (`.github/workflows/ci.yml`). No merge queue.
   Don't add >5 procedural lines to CI YAML — use a script (see CLAUDE.md).
 - **SSE behind a proxy needs buffering OFF** (see `docs/deployment.md`) or realtime dies silently.
 - **No auth.** Initials are a label, not identity. Trusted-network tool only.
