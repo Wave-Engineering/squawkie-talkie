@@ -370,8 +370,8 @@ test("? key shows the keymap overlay and any key dismisses it", async () => {
   // Overlay should be in the DOM
   expect(container.querySelector(".keymap-overlay")).not.toBeNull();
 
-  // Dismiss with any key (use setTimeout 0 to match the implementation)
-  await new Promise((r) => setTimeout(r, 0));
+  // Any key other than the one that opened it dismisses — the dismiss
+  // listeners attach synchronously, so no tick is needed here.
   document.dispatchEvent(
     new KeyboardEvent("keydown", { key: "x", bubbles: true }),
   );
