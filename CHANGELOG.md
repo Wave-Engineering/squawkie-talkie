@@ -7,6 +7,31 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-16 — Multiple photos per squawk & carousel viewer
+
+### Added
+- **Up to 5 photos per squawk** — extends the single-photo feature (#113) to a
+  small gallery. The upload interaction is unchanged (tap 📷, capture or upload),
+  but now **appends** into the next slot and disables at the cap of 5. The row
+  shows the first image as a thumbnail with a **count badge** (only when > 1);
+  clicking it opens a new accessible **carousel** — prev/next, a dot strip, an
+  "N / M" counter, per-image remove, ←/→/Esc keys, and a focus trap that restores
+  focus on close — with no new timeline chrome. New plural API
+  `POST /api/squawks/:id/images` (`409` at the cap), `GET`/`DELETE
+  /api/squawks/:id/images/:id`; the public squawk gains an ordered **`image_ids`**
+  list, with `has_image` derived from it. Bytes stay in SQLite, addressed by
+  reference, never inlined into squawk JSON or an SSE frame. The `squawk_images`
+  table moves 1:1 → 1:N (own `id` PK, indexed `squawk_id` FK, 0-based `position`);
+  an idempotent, self-detecting migration maps any existing single image to
+  `position 0`, so photos from v0.6.0 survive the upgrade. (#127)
+
+### Internal
+- **Container publish to GHCR** — CI now builds and pushes
+  `ghcr.io/wave-engineering/squawkie-talkie:<version>` when a `vX.Y.Z` release tag
+  is pushed, so operators can `docker pull` the tagged image instead of building
+  from source. Images are tagged **without** the `v` prefix (e.g. `0.7.0`).
+  (#124, #126)
+
 ## [0.6.0] — 2026-07-14 — Photos on squawks & live connection status
 
 ### Added
