@@ -8,7 +8,7 @@ const PNG_2x2 = Buffer.from(
   "base64",
 );
 
-/** Attach an image to the first squawk row via its 📷 button + the file chooser. */
+/** Attach one image to the first squawk row via its 📷 button + the file chooser. */
 async function attachPhoto(page: import("@playwright/test").Page): Promise<void> {
   const [chooser] = await Promise.all([
     page.waitForEvent("filechooser"),
@@ -21,45 +21,60 @@ async function attachPhoto(page: import("@playwright/test").Page): Promise<void>
   });
 }
 
-test.describe("squawk image attach / remove (#113)", () => {
-  test("attach shows a thumbnail that persists across reload; remove clears it", async ({
+test.describe("squawk images: multi-image + carousel (#127)", () => {
+  test("append up to 5 with a count badge; carousel flips + removes; persists", async ({
     seededPage: page,
   }) => {
     await createList(page, "PhotoList");
-    await addSquawk(page, "with a photo");
+    await addSquawk(page, "with photos");
 
-    const thumb = page.locator("[data-squawk-id]").first().locator(".squawk-row__thumb");
-    // No image yet — the thumbnail is hidden, only the camera button shows.
+    const row = page.locator("[data-squawk-id]").first();
+    const thumb = row.locator(".squawk-row__thumb");
+    const badge = row.locator(".squawk-row__thumb-count");
+
+    // No images yet — the thumbnail is hidden, only the 📷 button shows.
     await expect(thumb).toBeHidden();
 
+    // First photo: the thumbnail appears, but with one image there is no badge.
     await attachPhoto(page);
-
-    // The thumbnail (and its remove control) appear once the upload completes.
     await expect(thumb).toBeVisible();
-    await expect(
-      page.locator("[data-squawk-id]").first().locator(".squawk-row__image-remove"),
-    ).toBeVisible();
+    await expect(badge).toBeHidden();
 
-    // Persists: has_image round-trips via the API, so a reload re-renders it.
+    // Two more — the count badge appears and tracks the total. Awaiting each
+    // count also serializes the uploads so the next attach can't race.
+    await attachPhoto(page);
+    await expect(badge).toHaveText("2");
+    await attachPhoto(page);
+    await expect(badge).toHaveText("3");
+
+    // Clicking the thumbnail opens the carousel at the first image.
+    await thumb.click();
+    const carousel = page.locator(".carousel");
+    await expect(carousel).toBeVisible();
+    const counter = carousel.locator(".carousel__counter");
+    await expect(counter).toHaveText("1 / 3");
+
+    // Flip forward with the next control.
+    await carousel.locator(".carousel__nav--next").click();
+    await expect(counter).toHaveText("2 / 3");
+
+    // Remove the current photo — two remain, and the carousel stays open.
+    await carousel.locator(".carousel__remove").click();
+    await expect(counter).toHaveText("2 / 2");
+
+    // Escape closes the carousel.
+    await page.keyboard.press("Escape");
+    await expect(carousel).toBeHidden();
+
+    // The row badge reflects the remaining two, and it persists across a reload
+    // (the ids round-trip via the API).
+    await expect(badge).toHaveText("2");
     await page.reload();
     await expect(
       page.locator("[data-squawk-id]").first().locator(".squawk-row__thumb"),
     ).toBeVisible();
-
-    // Remove clears the thumbnail...
-    await page
-      .locator("[data-squawk-id]")
-      .first()
-      .locator(".squawk-row__image-remove")
-      .click();
     await expect(
-      page.locator("[data-squawk-id]").first().locator(".squawk-row__thumb"),
-    ).toBeHidden();
-
-    // ...and it stays cleared across another reload.
-    await page.reload();
-    await expect(
-      page.locator("[data-squawk-id]").first().locator(".squawk-row__thumb"),
-    ).toBeHidden();
+      page.locator("[data-squawk-id]").first().locator(".squawk-row__thumb-count"),
+    ).toHaveText("2");
   });
 });

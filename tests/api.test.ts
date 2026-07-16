@@ -328,7 +328,7 @@ test("missing list -> 404", async () => {
   ).toBe(404);
 });
 
-// --- squawk images (#113) ----------------------------------------------------
+// --- squawk images (#127: up to 5 per squawk) --------------------------------
 
 /** Build a raw-bytes image request (not JSON — the image API takes the body verbatim). */
 function imgReq(
@@ -354,164 +354,209 @@ async function seedSquawk(listName: string) {
   ).json();
 }
 
+/** Append one image to a squawk; returns the status and (on 200) the updated squawk. */
+async function attachImage(squawkId: number, mime: string, bytes: Uint8Array) {
+  const res = await routeRequest(
+    imgReq("POST", `/api/squawks/${squawkId}/images`, mime, bytes),
+  );
+  return { status: res.status, squawk: res.status === 200 ? await res.json() : null };
+}
+
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-test("a fresh squawk has has_image=false", async () => {
+test("a fresh squawk has no images (image_ids=[], has_image=false)", async () => {
   const sq = await seedSquawk("ImgFresh");
+  expect(sq.image_ids).toEqual([]);
   expect(sq.has_image).toBe(false);
 });
 
-test("POST image attaches, flips has_image, and GET returns the same bytes + mime", async () => {
+test("POST appends an image, flips has_image, and GET returns the same bytes + mime", async () => {
   const sq = await seedSquawk("ImgAttach");
 
-  const post = await routeRequest(
-    imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG),
-  );
-  expect(post.status).toBe(200);
-  expect((await post.json()).has_image).toBe(true);
+  const { status, squawk } = await attachImage(sq.id, "image/png", PNG);
+  expect(status).toBe(200);
+  expect(squawk.has_image).toBe(true);
+  expect(squawk.image_ids.length).toBe(1);
+  const imageId = squawk.image_ids[0];
 
-  // has_image is visible on the list-detail projection too.
+  // image_ids is visible on the list-detail projection too.
   const detail = await (
     await routeRequest(req("GET", `/api/lists/${sq.list_id}`))
   ).json();
-  expect(detail.squawks[0].has_image).toBe(true);
+  expect(detail.squawks[0].image_ids).toEqual([imageId]);
 
-  const get = await routeRequest(req("GET", `/api/squawks/${sq.id}/image`));
+  const get = await routeRequest(
+    req("GET", `/api/squawks/${sq.id}/images/${imageId}`),
+  );
   expect(get.status).toBe(200);
   expect(get.headers.get("content-type")).toBe("image/png");
   expect(get.headers.get("x-content-type-options")).toBe("nosniff");
   expect(new Uint8Array(await get.arrayBuffer())).toEqual(PNG);
 });
 
-test("POST image replaces an existing image (upsert, still 1:1)", async () => {
-  const sq = await seedSquawk("ImgReplace");
-  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+test("appends preserve upload order, each addressable by its own id", async () => {
+  const sq = await seedSquawk("ImgOrder");
+  const a = new Uint8Array([1, 1, 1, 1]);
+  const b = new Uint8Array([2, 2, 2, 2]);
+  const c = new Uint8Array([3, 3, 3, 3]);
 
-  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
-  const res = await routeRequest(
-    imgReq("POST", `/api/squawks/${sq.id}/image`, "image/jpeg", jpeg),
-  );
-  expect(res.status).toBe(200);
+  const r1 = await attachImage(sq.id, "image/png", a);
+  const r2 = await attachImage(sq.id, "image/jpeg", b);
+  const r3 = await attachImage(sq.id, "image/webp", c);
 
-  const get = await routeRequest(req("GET", `/api/squawks/${sq.id}/image`));
-  expect(get.headers.get("content-type")).toBe("image/jpeg");
-  expect(new Uint8Array(await get.arrayBuffer())).toEqual(jpeg);
+  expect(r3.squawk.image_ids.length).toBe(3);
+  const [id1, id2, id3] = r3.squawk.image_ids;
+  // Ids come back in upload order across the successive responses.
+  expect(r1.squawk.image_ids).toEqual([id1]);
+  expect(r2.squawk.image_ids).toEqual([id1, id2]);
+
+  const bytesOf = async (imageId: number) =>
+    new Uint8Array(
+      await (
+        await routeRequest(req("GET", `/api/squawks/${sq.id}/images/${imageId}`))
+      ).arrayBuffer(),
+    );
+  expect(await bytesOf(id1)).toEqual(a);
+  expect(await bytesOf(id2)).toEqual(b);
+  expect(await bytesOf(id3)).toEqual(c);
 });
 
-test("GET image is 404 when the squawk has none", async () => {
-  const sq = await seedSquawk("ImgNone");
+test("a 6th image is rejected with 409 and the count stays at 5", async () => {
+  const sq = await seedSquawk("ImgCap");
+  for (let i = 0; i < 5; i++) {
+    expect((await attachImage(sq.id, "image/png", new Uint8Array([i]))).status).toBe(
+      200,
+    );
+  }
+  expect((await attachImage(sq.id, "image/png", new Uint8Array([9]))).status).toBe(
+    409,
+  );
+
+  const detail = await (
+    await routeRequest(req("GET", `/api/lists/${sq.list_id}`))
+  ).json();
+  expect(detail.squawks[0].image_ids.length).toBe(5);
+});
+
+test("GET is 404 for an image id not on that squawk", async () => {
+  const sq = await seedSquawk("ImgWrongId");
+  const { squawk } = await attachImage(sq.id, "image/png", PNG);
+  const goodId = squawk.image_ids[0];
+  // Right squawk, wrong image id.
   expect(
-    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+    (
+      await routeRequest(
+        req("GET", `/api/squawks/${sq.id}/images/${goodId + 999}`),
+      )
+    ).status,
+  ).toBe(404);
+  // Unknown squawk entirely.
+  expect(
+    (await routeRequest(req("GET", `/api/squawks/999999/images/${goodId}`))).status,
   ).toBe(404);
 });
 
-test("POST image rejects a non-allowlisted mime (SVG/HTML) with 415", async () => {
+test("POST rejects a non-allowlisted mime (SVG/HTML) with 415", async () => {
   const sq = await seedSquawk("ImgMime");
   const svg = new Uint8Array([0x3c, 0x73, 0x76, 0x67]); // "<svg"
-  expect(
-    (
-      await routeRequest(
-        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/svg+xml", svg),
-      )
-    ).status,
-  ).toBe(415);
-  expect(
-    (
-      await routeRequest(
-        imgReq("POST", `/api/squawks/${sq.id}/image`, "text/html", svg),
-      )
-    ).status,
-  ).toBe(415);
+  expect((await attachImage(sq.id, "image/svg+xml", svg)).status).toBe(415);
+  expect((await attachImage(sq.id, "text/html", svg)).status).toBe(415);
 });
 
-test("POST image rejects an oversize body with 413", async () => {
+test("POST rejects an oversize body with 413", async () => {
   const sq = await seedSquawk("ImgBig");
   const tooBig = new Uint8Array(2 * 1024 * 1024 + 1); // one byte over the 2 MB cap
-  expect(
-    (
-      await routeRequest(
-        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", tooBig),
-      )
-    ).status,
-  ).toBe(413);
+  expect((await attachImage(sq.id, "image/png", tooBig)).status).toBe(413);
 });
 
-test("POST image rejects an empty body with 400", async () => {
+test("POST rejects an empty body with 400", async () => {
   const sq = await seedSquawk("ImgEmpty");
-  expect(
-    (
-      await routeRequest(
-        imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", new Uint8Array()),
-      )
-    ).status,
-  ).toBe(400);
+  expect((await attachImage(sq.id, "image/png", new Uint8Array())).status).toBe(400);
 });
 
-test("POST image to an unknown squawk is 404", async () => {
-  expect(
-    (
-      await routeRequest(
-        imgReq("POST", "/api/squawks/999999/image", "image/png", PNG),
-      )
-    ).status,
-  ).toBe(404);
+test("POST to an unknown squawk is 404", async () => {
+  expect((await attachImage(999999, "image/png", PNG)).status).toBe(404);
 });
 
-test("DELETE image clears has_image and 404s a subsequent GET", async () => {
-  const sq = await seedSquawk("ImgDelete");
-  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+test("DELETE removes one image, leaving the rest in order", async () => {
+  const sq = await seedSquawk("ImgDeleteOne");
+  await attachImage(sq.id, "image/png", new Uint8Array([10]));
+  await attachImage(sq.id, "image/png", new Uint8Array([20]));
+  const last = await attachImage(sq.id, "image/png", new Uint8Array([30]));
+  const [id1, id2, id3] = last.squawk.image_ids;
 
-  const del = await routeRequest(req("DELETE", `/api/squawks/${sq.id}/image`));
+  const del = await routeRequest(
+    req("DELETE", `/api/squawks/${sq.id}/images/${id2}`),
+  );
   expect(del.status).toBe(200);
   expect(await del.json()).toEqual({ ok: true });
 
+  // The removed id 404s; the survivors remain, order preserved.
   expect(
-    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/images/${id2}`))).status,
   ).toBe(404);
   const detail = await (
     await routeRequest(req("GET", `/api/lists/${sq.list_id}`))
   ).json();
-  expect(detail.squawks[0].has_image).toBe(false);
+  expect(detail.squawks[0].image_ids).toEqual([id1, id3]);
 });
 
-test("DELETE image on a squawk without one is 404", async () => {
+test("DELETE an image that isn't there is 404", async () => {
   const sq = await seedSquawk("ImgDeleteNone");
   expect(
-    (await routeRequest(req("DELETE", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("DELETE", `/api/squawks/${sq.id}/images/1`))).status,
   ).toBe(404);
 });
 
-test("deleting the squawk cascades its image (no orphan row)", async () => {
+test("deleting the squawk cascades all its images (no orphan rows)", async () => {
   const sq = await seedSquawk("ImgCascadeSquawk");
-  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+  const r = await attachImage(sq.id, "image/png", PNG);
+  const imageId = r.squawk.image_ids[0];
 
   expect((await routeRequest(req("DELETE", `/api/squawks/${sq.id}`))).status).toBe(
     200,
   );
-  // The image row is gone with the squawk.
   expect(
-    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/images/${imageId}`)))
+      .status,
   ).toBe(404);
 });
 
 test("deleting the list cascades its squawks' images", async () => {
   const sq = await seedSquawk("ImgCascadeList");
-  await routeRequest(imgReq("POST", `/api/squawks/${sq.id}/image`, "image/png", PNG));
+  const r = await attachImage(sq.id, "image/png", PNG);
+  const imageId = r.squawk.image_ids[0];
 
   expect(
     (await routeRequest(req("DELETE", `/api/lists/${sq.list_id}`))).status,
   ).toBe(200);
   expect(
-    (await routeRequest(req("GET", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/images/${imageId}`)))
+      .status,
   ).toBe(404);
 });
 
-test("undocumented methods on the image route are 405", async () => {
+test("undocumented methods on the image routes are 405", async () => {
   const sq = await seedSquawk("ImgMethods");
+  const r = await attachImage(sq.id, "image/png", PNG);
+  const imageId = r.squawk.image_ids[0];
+  // Collection route: only POST is allowed.
   expect(
-    (await routeRequest(req("PUT", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("GET", `/api/squawks/${sq.id}/images`))).status,
   ).toBe(405);
   expect(
-    (await routeRequest(req("PATCH", `/api/squawks/${sq.id}/image`))).status,
+    (await routeRequest(req("PUT", `/api/squawks/${sq.id}/images`))).status,
+  ).toBe(405);
+  expect(
+    (await routeRequest(req("DELETE", `/api/squawks/${sq.id}/images`))).status,
+  ).toBe(405);
+  // Item route: only GET and DELETE are allowed.
+  expect(
+    (await routeRequest(req("POST", `/api/squawks/${sq.id}/images/${imageId}`)))
+      .status,
+  ).toBe(405);
+  expect(
+    (await routeRequest(req("PATCH", `/api/squawks/${sq.id}/images/${imageId}`)))
+      .status,
   ).toBe(405);
 });

@@ -30,6 +30,8 @@ const mkSquawk = (id: number, seq: number, state = "open") => ({
   initials: "BJ",
   created_at: "2026-01-01T00:00:00.000Z",
   updated_at: "2026-01-01T00:00:00.000Z",
+  has_image: false,
+  image_ids: [] as number[],
 });
 
 /** A list payload as `GET /api/lists/:id` returns it (squawks newest-first). */

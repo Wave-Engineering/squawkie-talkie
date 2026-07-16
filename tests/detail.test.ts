@@ -30,6 +30,7 @@ test("countByState tallies open / retired / recorded", () => {
     created_at: "t",
     updated_at: "t",
     has_image: false,
+    image_ids: [],
   });
   expect(countByState([])).toEqual({ open: 0, retired: 0, recorded: 0 });
   expect(

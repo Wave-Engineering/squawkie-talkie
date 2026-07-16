@@ -22,21 +22,24 @@
  */
 
 import {
+  addSquawkImage,
   createList,
   createSquawk,
   deleteList,
   deleteSquawk,
-  deleteSquawkImage,
+  deleteSquawkImageById,
   getList,
   getListByName,
   getSquawk,
-  getSquawkImage,
+  getSquawkImageById,
+  ImageLimitError,
   listLists,
+  listSquawkImageIds,
   listSquawks,
-  setSquawkImage,
   updateSquawk,
 } from "./db.ts";
 import { broadcast } from "./sse.ts";
+import { MAX_IMAGES_PER_SQUAWK } from "./types.ts";
 import type { List, SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
@@ -210,24 +213,38 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
     return json({ error: "method not allowed" }, 405);
   }
 
-  // /api/squawks/:id/image — the one optional image on a squawk.
+  // /api/squawks/:id/images — the squawk's image collection (append; up to 5).
   if (
     segments.length === 4 &&
     segments[1] === "squawks" &&
-    segments[3] === "image"
+    segments[3] === "images"
   ) {
     const id = parseId(segments[2]!);
     if (id === null) {
       return json({ error: "squawk not found" }, 404);
     }
-    if (method === "GET") {
-      return getSquawkImageRoute(id);
-    }
     if (method === "POST") {
-      return setSquawkImageRoute(req, id);
+      return addSquawkImageRoute(req, id);
+    }
+    return json({ error: "method not allowed" }, 405);
+  }
+
+  // /api/squawks/:id/images/:id — one image within a squawk's collection.
+  if (
+    segments.length === 5 &&
+    segments[1] === "squawks" &&
+    segments[3] === "images"
+  ) {
+    const id = parseId(segments[2]!);
+    const imageId = parseId(segments[4]!);
+    if (id === null || imageId === null) {
+      return json({ error: "image not found" }, 404);
+    }
+    if (method === "GET") {
+      return getSquawkImageRoute(id, imageId);
     }
     if (method === "DELETE") {
-      return deleteSquawkImageRoute(id);
+      return deleteSquawkImageRoute(id, imageId);
     }
     return json({ error: "method not allowed" }, 405);
   }
@@ -383,8 +400,8 @@ const IMAGE_MIME_ALLOWLIST: ReadonlySet<string> = new Set([
  */
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
-/** POST /api/squawks/:id/image — body is the raw image bytes; `Content-Type` names the mime. */
-async function setSquawkImageRoute(req: Request, id: number): Promise<Response> {
+/** POST /api/squawks/:id/images — append one image (raw bytes body); caps at 5. */
+async function addSquawkImageRoute(req: Request, id: number): Promise<Response> {
   // Existence first: a *specific* 404 (not the generic "not found") both matches
   // the sibling squawk routes and keeps the route probeable by the drift guard.
   if (!getSquawk(id)) {
@@ -397,6 +414,15 @@ async function setSquawkImageRoute(req: Request, id: number): Promise<Response> 
     .toLowerCase();
   if (!IMAGE_MIME_ALLOWLIST.has(mime)) {
     return json({ error: "unsupported image type" }, 415);
+  }
+
+  // Cheap early cap check so a 6th upload is rejected *before* buffering its
+  // body; addSquawkImage re-checks atomically as the real guard against races.
+  if (listSquawkImageIds(id).length >= MAX_IMAGES_PER_SQUAWK) {
+    return json(
+      { error: `at most ${MAX_IMAGES_PER_SQUAWK} images per squawk` },
+      409,
+    );
   }
 
   // Fast-reject an over-cap upload on its declared Content-Length *before*
@@ -418,15 +444,26 @@ async function setSquawkImageRoute(req: Request, id: number): Promise<Response> 
     return json({ error: "image too large" }, 413);
   }
 
-  setSquawkImage(id, { mime, bytes, byteSize: bytes.byteLength });
-  const squawk = getSquawk(id)!; // now has_image: true
+  try {
+    addSquawkImage(id, { mime, bytes, byteSize: bytes.byteLength });
+  } catch (err) {
+    // Lost the race between the early check and the atomic insert.
+    if (err instanceof ImageLimitError) {
+      return json(
+        { error: `at most ${MAX_IMAGES_PER_SQUAWK} images per squawk` },
+        409,
+      );
+    }
+    throw err;
+  }
+  const squawk = getSquawk(id)!; // image_ids now includes the appended id
   broadcast({ type: "squawk.updated", squawk });
   return json(squawk);
 }
 
-/** GET /api/squawks/:id/image — the stored bytes with their stored (raster) mime. */
-function getSquawkImageRoute(id: number): Response {
-  const img = getSquawkImage(id);
+/** GET /api/squawks/:id/images/:id — one stored image with its stored (raster) mime. */
+function getSquawkImageRoute(id: number, imageId: number): Response {
+  const img = getSquawkImageById(id, imageId);
   if (!img) {
     return json({ error: "image not found" }, 404);
   }
@@ -443,10 +480,10 @@ function getSquawkImageRoute(id: number): Response {
   });
 }
 
-/** DELETE /api/squawks/:id/image — drop only the image (not the squawk). */
-function deleteSquawkImageRoute(id: number): Response {
-  if (!deleteSquawkImage(id)) {
-    // No image row (squawk absent, or squawk present but imageless) → specific 404.
+/** DELETE /api/squawks/:id/images/:id — drop one image (not the squawk). */
+function deleteSquawkImageRoute(id: number, imageId: number): Response {
+  if (!deleteSquawkImageById(id, imageId)) {
+    // No such image on this squawk (absent squawk, or wrong/gone id) → specific 404.
     return json({ error: "image not found" }, 404);
   }
   const squawk = getSquawk(id);
