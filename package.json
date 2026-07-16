@@ -1,7 +1,7 @@
 {
   "name": "squawkie-talkie",
   "type": "module",
-  "version": "0.0.0",
+  "version": "0.7.0",
   "private": true,
   "scripts": {
     "dev": "bun run src/server/index.ts",
