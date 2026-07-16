@@ -443,13 +443,20 @@ body {
   cursor: progress;
 }
 
-.squawk-row__thumb-link {
+/* The thumbnail is a button that opens the carousel. It shows the FIRST image
+   plus, when the squawk has more than one, a small count badge in the corner. */
+.squawk-row__thumb-btn {
+  position: relative;
   display: inline-flex;
+  padding: 0;
   line-height: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
 }
 /* Reclaim the `hidden` attribute: the class's `display` above would otherwise
    beat the UA `[hidden]{display:none}` rule and render an empty <img>. */
-.squawk-row__thumb-link[hidden] {
+.squawk-row__thumb-btn[hidden] {
   display: none;
 }
 .squawk-row__thumb {
@@ -460,26 +467,149 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
 }
-.squawk-row__thumb-link:hover .squawk-row__thumb {
+.squawk-row__thumb-btn:hover .squawk-row__thumb,
+.squawk-row__thumb-btn:focus-visible .squawk-row__thumb {
   border-color: var(--accent-dim);
 }
 
-.squawk-row__image-remove {
+/* Count badge overlaid on the thumbnail — shown only when count > 1. */
+.squawk-row__thumb-count {
+  position: absolute;
+  top: -0.35rem;
+  right: -0.35rem;
+  min-width: 1.05rem;
+  padding: 0 0.28rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.05rem;
+  text-align: center;
+  color: #04212a;
+  background: var(--accent);
+  border-radius: 999px;
+  pointer-events: none;
+}
+.squawk-row__thumb-count[hidden] {
+  display: none;
+}
+
+/* Image carousel modal (#127) — opened from a row thumbnail. Sits above the
+   initials/first-list gates (z 100) so it can open over any screen. */
+.carousel-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  background: rgba(5, 6, 10, 0.82);
+}
+.carousel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(46rem, 100%);
+  max-height: 100%;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  border-radius: var(--radius);
+  box-shadow: 0 0 24px rgba(0, 229, 255, 0.12);
+}
+.carousel__close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-3);
   padding: 0 var(--space-2);
-  font-size: 1rem;
+  font-size: 1.4rem;
   line-height: 1;
   color: var(--text-dim);
   background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.carousel__close:hover {
+  color: var(--text);
+}
+.carousel__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 0;
+}
+.carousel__img {
+  flex: 1;
+  min-width: 0;
+  max-height: min(70vh, 32rem);
+  object-fit: contain;
+  border-radius: var(--radius);
+}
+.carousel__nav {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  font-size: 1.6rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.carousel__nav:hover:not(:disabled) {
+  border-color: var(--accent-dim);
+}
+.carousel__nav:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.carousel__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.carousel__counter {
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.carousel__dots {
+  display: flex;
+  flex: 1;
+  gap: var(--space-2);
+  justify-content: center;
+}
+.carousel__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  padding: 0;
+  background: var(--border-strong);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.carousel__dot--active {
+  background: var(--accent);
+}
+.carousel__remove {
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    border-color 120ms ease;
 }
-.squawk-row__image-remove:hover {
-  color: var(--text);
-  border-color: var(--state-retired);
+.carousel__remove:hover:not(:disabled) {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+}
+.carousel__remove:disabled {
+  opacity: 0.5;
+  cursor: progress;
 }
 
 /* Initials modal (cookie gate) */

@@ -24,17 +24,20 @@
  *   30s idle autosave with amber warning at 15s
  */
 
+import { MAX_IMAGES_PER_SQUAWK } from "../server/types.ts";
 import type { Squawk, SquawkState } from "../server/types.ts";
 import {
   createSquawk,
   deleteSquawk as apiDeleteSquawk,
   deleteSquawkImage,
   getList,
+  ImageLimitError,
   squawkImageUrl,
   updateSquawk,
   uploadSquawkImage,
   type ListDetail,
 } from "./api.ts";
+import { openCarousel } from "./carousel.ts";
 import {
   hasSeen,
   replayTour,
@@ -310,9 +313,18 @@ export async function renderList(
       .then((blob) => uploadSquawkImage(targetId, blob))
       .then((updated) => {
         model.set(updated.id, updated);
-        rowHandles.get(targetId)?.refreshImage();
+        rowHandles.get(targetId)?.setImageIds(updated.image_ids);
       })
-      .catch((err) => console.error("image upload failed", err));
+      .catch((err) => {
+        // The 📷 button is disabled at the cap, so a 409 is only reachable via a
+        // race; resync the row from the model so its disabled state is honest.
+        if (err instanceof ImageLimitError) {
+          rowHandles
+            .get(targetId)
+            ?.setImageIds(model.get(targetId)?.image_ids ?? []);
+        }
+        console.error("image upload failed", err);
+      });
   });
 
   // Header
@@ -726,7 +738,7 @@ export async function renderList(
     model.set(squawk.id, squawk);
     handle.setState(squawk.state);
     handle.setRecorder(squawk.initials);
-    handle.setHasImage(squawk.has_image);
+    handle.setImageIds(squawk.image_ids);
     if (applyToInput) {
       handle.setText(squawk.text);
     }
@@ -1020,10 +1032,12 @@ interface RowHandle {
   setText(text: string): void;
   setState(state: SquawkState): void;
   setRecorder(initials: string): void;
-  /** Reflect a (possibly remote) `has_image` change onto the thumbnail. */
-  setHasImage(has: boolean): void;
-  /** Force-show this row's image, cache-busted — after a local attach/replace. */
-  refreshImage(): void;
+  /**
+   * Reflect a new ordered image-id list onto the row: the thumbnail (first id),
+   * the count badge (shown when > 1), and the 📷 button's disabled-at-cap state.
+   * Drives both local uploads/removes and remote (SSE) changes.
+   */
+  setImageIds(ids: number[]): void;
   flushSave(): void;
   cancelSave(): void;
 }
@@ -1097,80 +1111,95 @@ function buildSquawkRow(
   recorder.className = "squawk-row__recorder mono";
   setRecorderText(recorder, squawk.initials);
 
-  // --- Image affordance: capture/upload button + optional thumbnail ---
+  // --- Image affordance: capture/upload button + thumbnail that opens a carousel ---
   // The file <input> is NOT per-row — a single shared one lives in `renderList`
   // so each squawk row keeps exactly one <input> (its text box). The 📷 button
-  // just asks `renderList` to open that picker targeting this squawk.
+  // asks `renderList` to open that picker targeting this squawk (append, up to
+  // MAX_IMAGES_PER_SQUAWK). The thumbnail shows the first image plus, when there
+  // is more than one, a count badge; clicking it opens the carousel.
   const imageCell = document.createElement("div");
   imageCell.className = "squawk-row__image";
+
+  let imageIds = squawk.image_ids ?? [];
 
   const attachBtn = document.createElement("button");
   attachBtn.type = "button";
   attachBtn.className = "squawk-row__image-btn";
-  attachBtn.title = "Attach a photo";
   attachBtn.textContent = "📷";
   attachBtn.setAttribute("aria-label", `Attach a photo to squawk ${squawk.seq}`);
   attachBtn.addEventListener("click", () => onPickImage(squawk.id));
 
-  const thumbLink = document.createElement("a");
-  thumbLink.className = "squawk-row__thumb-link";
-  thumbLink.target = "_blank";
-  thumbLink.rel = "noopener";
-  thumbLink.hidden = true;
+  const thumbBtn = document.createElement("button");
+  thumbBtn.type = "button";
+  thumbBtn.className = "squawk-row__thumb-btn";
+  thumbBtn.hidden = true;
 
   const thumb = document.createElement("img");
   thumb.className = "squawk-row__thumb";
   thumb.alt = `Photo on squawk ${squawk.seq}`;
   thumb.loading = "lazy";
-  thumbLink.append(thumb);
 
-  const removeBtn = document.createElement("button");
-  removeBtn.type = "button";
-  removeBtn.className = "squawk-row__image-remove";
-  removeBtn.title = "Remove photo";
-  removeBtn.textContent = "×";
-  removeBtn.setAttribute("aria-label", `Remove photo from squawk ${squawk.seq}`);
-  removeBtn.hidden = true;
+  const countBadge = document.createElement("span");
+  countBadge.className = "squawk-row__thumb-count";
+  countBadge.hidden = true;
 
-  let imageShown = false;
+  thumbBtn.append(thumb, countBadge);
 
-  // Show the thumbnail. `bust` forces a fresh fetch (after a local attach/replace,
-  // where the URL is unchanged but the bytes are not); a plain reflect of a
-  // remote flag doesn't need it.
-  function showImage(bust: boolean): void {
-    const base = squawkImageUrl(squawk.id);
-    thumb.src = bust ? `${base}?t=${Date.now()}` : base;
-    thumbLink.href = base;
-    thumbLink.hidden = false;
-    removeBtn.hidden = false;
-    attachBtn.title = "Replace photo";
-    imageShown = true;
+  /** Reflect `imageIds` onto the thumbnail, badge, and the 📷 cap state. */
+  function renderImage(): void {
+    const count = imageIds.length;
+    if (count === 0) {
+      thumbBtn.hidden = true;
+      thumb.removeAttribute("src");
+      attachBtn.disabled = false;
+      attachBtn.title = "Attach a photo";
+      return;
+    }
+    // The first image is the thumbnail; its per-id URL is stable across appends
+    // (so it won't refetch) and changes when the first image is removed (so it does).
+    thumb.src = squawkImageUrl(squawk.id, imageIds[0]!);
+    thumbBtn.hidden = false;
+    thumbBtn.setAttribute(
+      "aria-label",
+      count === 1
+        ? `View photo on squawk ${squawk.seq}`
+        : `View ${count} photos on squawk ${squawk.seq}`,
+    );
+    countBadge.textContent = String(count);
+    countBadge.hidden = count <= 1;
+    const atCap = count >= MAX_IMAGES_PER_SQUAWK;
+    attachBtn.disabled = atCap;
+    attachBtn.title = atCap
+      ? `Max ${MAX_IMAGES_PER_SQUAWK} photos`
+      : "Add another photo";
   }
 
-  function hideImage(): void {
-    thumb.removeAttribute("src");
-    thumbLink.hidden = true;
-    removeBtn.hidden = true;
-    attachBtn.title = "Attach a photo";
-    imageShown = false;
-  }
-
-  removeBtn.addEventListener("click", () => {
-    removeBtn.disabled = true;
-    deleteSquawkImage(squawk.id)
-      .then(() => {
+  thumbBtn.addEventListener("click", () => {
+    if (imageIds.length === 0) return;
+    openCarousel({
+      squawkId: squawk.id,
+      seq: squawk.seq,
+      imageIds: [...imageIds],
+      imageUrl: (imageId) => squawkImageUrl(squawk.id, imageId),
+      onRemove: (imageId) =>
+        deleteSquawkImage(squawk.id, imageId).then(() => undefined),
+      onChange: (ids) => {
+        imageIds = ids;
         const current = model.get(squawk.id);
-        if (current) model.set(squawk.id, { ...current, has_image: false });
-        hideImage();
-      })
-      .catch((err) => console.error("image remove failed", err))
-      .finally(() => {
-        removeBtn.disabled = false;
-      });
+        if (current) {
+          model.set(squawk.id, {
+            ...current,
+            image_ids: ids,
+            has_image: ids.length > 0,
+          });
+        }
+        renderImage();
+      },
+    });
   });
 
-  imageCell.append(attachBtn, thumbLink, removeBtn);
-  if (squawk.has_image) showImage(false);
+  imageCell.append(attachBtn, thumbBtn);
+  renderImage();
 
   row.append(seq, input, select, recorder, imageCell);
 
@@ -1189,13 +1218,12 @@ function buildSquawkRow(
       }
     },
     setRecorder: (init: string): void => setRecorderText(recorder, init),
-    setHasImage: (has: boolean): void => {
-      // Act only on a transition — don't refetch the image on unrelated
-      // text/state updates (a remote replace re-fetches on next reload).
-      if (has && !imageShown) showImage(true);
-      else if (!has && imageShown) hideImage();
+    setImageIds: (ids: number[]): void => {
+      // Coerce a missing list to empty — patchSquawk feeds this from external
+      // SSE/server data, and a malformed frame must not crash the row render.
+      imageIds = ids ?? [];
+      renderImage();
     },
-    refreshImage: (): void => showImage(true),
     flushSave: (): void => save.flush(),
     cancelSave: (): void => {
       save.cancel();

@@ -10,6 +10,7 @@
  * layer never drift; `import type` is fully erased, so this adds no runtime
  * coupling and the client bundle never pulls in server code.
  */
+import { MAX_IMAGES_PER_SQUAWK } from "../server/types.ts";
 import type { List, Squawk, SquawkState } from "../server/types.ts";
 
 /** A list plus its squawks, as returned by `GET /api/lists/:id`. */
@@ -116,23 +117,50 @@ export function deleteSquawk(id: number): Promise<{ ok: true }> {
 }
 
 /**
- * POST /api/squawks/:id/image — attach or replace the squawk's one image. The
- * body is the raw (already client-resized) blob; `fetch` sets `Content-Type`
- * from `blob.type`. Returns the updated squawk (`has_image: true`).
+ * Thrown by {@link uploadSquawkImage} when the squawk is already at the
+ * {@link MAX_IMAGES_PER_SQUAWK} cap (server `409`). Callers can catch this
+ * distinctly to surface "already full" rather than a generic upload failure.
  */
-export function uploadSquawkImage(id: number, blob: Blob): Promise<Squawk> {
-  return request<Squawk>(`/api/squawks/${id}/image`, {
-    method: "POST",
-    body: blob,
+export class ImageLimitError extends Error {
+  constructor() {
+    super(`A squawk can have at most ${MAX_IMAGES_PER_SQUAWK} photos.`);
+    this.name = "ImageLimitError";
+  }
+}
+
+/**
+ * POST /api/squawks/:id/images — append one image to the squawk (up to
+ * {@link MAX_IMAGES_PER_SQUAWK}). The body is the raw (already client-resized)
+ * blob; `fetch` sets `Content-Type` from `blob.type`. Returns the updated squawk
+ * (its `image_ids` now includes the appended id). Throws {@link ImageLimitError}
+ * on a `409` (squawk full), else a generic Error on any other non-2xx.
+ */
+export async function uploadSquawkImage(
+  id: number,
+  blob: Blob,
+): Promise<Squawk> {
+  const path = `/api/squawks/${id}/images`;
+  const res = await fetch(path, { method: "POST", body: blob });
+  if (res.status === 409) {
+    throw new ImageLimitError();
+  }
+  if (!res.ok) {
+    throw new Error(`POST ${path} failed: ${res.status}${await errorDetail(res)}`);
+  }
+  return (await res.json()) as Squawk;
+}
+
+/** DELETE /api/squawks/:id/images/:imageId — remove one image (not the squawk). */
+export function deleteSquawkImage(
+  id: number,
+  imageId: number,
+): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`/api/squawks/${id}/images/${imageId}`, {
+    method: "DELETE",
   });
 }
 
-/** DELETE /api/squawks/:id/image — remove only the image (not the squawk). */
-export function deleteSquawkImage(id: number): Promise<{ ok: true }> {
-  return request<{ ok: true }>(`/api/squawks/${id}/image`, { method: "DELETE" });
-}
-
-/** The URL a squawk's image is served from (used directly as an `<img src>`). */
-export function squawkImageUrl(id: number): string {
-  return `/api/squawks/${id}/image`;
+/** The URL one squawk image is served from (used directly as an `<img src>`). */
+export function squawkImageUrl(id: number, imageId: number): string {
+  return `/api/squawks/${id}/images/${imageId}`;
 }

@@ -26,6 +26,7 @@ function squawk(over: Partial<Squawk> = {}): Squawk {
     created_at: "t",
     updated_at: "t",
     has_image: false,
+    image_ids: [],
     ...over,
   };
 }

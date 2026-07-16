@@ -11,6 +11,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { MAX_IMAGES_PER_SQUAWK } from "./types.ts";
 import type { List, Squawk, SquawkState } from "./types.ts";
 
 /**
@@ -49,20 +50,72 @@ export function getDb(): Database {
       updated_at TEXT NOT NULL
     );
 
-    -- One optional image per squawk. Bytes live in-DB so the "instance = one
-    -- file" backup/expunge story holds and the cascade below reclaims them for
-    -- free: deleting the squawk (the undo) or its list drops the image with no
-    -- app-level cleanup. squawk_id is both PK and FK, enforcing the 1:1.
-    CREATE TABLE IF NOT EXISTS squawk_images (
-      squawk_id INTEGER PRIMARY KEY REFERENCES squawks(id) ON DELETE CASCADE,
-      mime TEXT NOT NULL,
-      bytes BLOB NOT NULL,
-      byte_size INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
   `);
+  // squawk_images owns its own lifecycle below: the 1:N schema plus a one-time,
+  // self-detecting migration from the legacy 1:1 table (squawk_id as PK). Kept
+  // out of the block above so the migration can rebuild an existing table before
+  // a CREATE IF NOT EXISTS would otherwise no-op over the old shape.
+  migrateSquawkImages(db);
   connection = db;
   return connection;
+}
+
+/**
+ * Ensure `squawk_images` is in the 1:N shape (own `id` PK, `squawk_id` FK,
+ * `position` for ordering), migrating from the legacy 1:1 shape if needed.
+ *
+ * Idempotent and self-detecting: it probes the current columns and only rebuilds
+ * when it finds the old table (no `id` column). On a fresh DB it just creates the
+ * new shape; on an already-migrated DB both branches are no-ops. Exported so the
+ * migration can be unit-tested against a throwaway connection without going
+ * through the memoized `getDb()` singleton.
+ */
+export function migrateSquawkImages(db: Database): void {
+  const cols = db.query("PRAGMA table_info(squawk_images)").all() as Array<{
+    name: string;
+  }>;
+  const isLegacyShape = cols.length > 0 && !cols.some((c) => c.name === "id");
+
+  if (isLegacyShape) {
+    // Rebuild the 1:1 table into the 1:N shape, mapping the single existing
+    // image onto position 0. Wrapped in a transaction so a partial rebuild can
+    // never leave a torn/half-renamed table behind.
+    db.transaction(() => {
+      db.exec(`
+        CREATE TABLE squawk_images_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          squawk_id INTEGER NOT NULL REFERENCES squawks(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL,
+          mime TEXT NOT NULL,
+          bytes BLOB NOT NULL,
+          byte_size INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          UNIQUE(squawk_id, position)
+        );
+        INSERT INTO squawk_images_new (squawk_id, position, mime, bytes, byte_size, created_at)
+          SELECT squawk_id, 0, mime, bytes, byte_size, created_at FROM squawk_images;
+        DROP TABLE squawk_images;
+        ALTER TABLE squawk_images_new RENAME TO squawk_images;
+      `);
+    })();
+  } else {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS squawk_images (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        squawk_id INTEGER NOT NULL REFERENCES squawks(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        mime TEXT NOT NULL,
+        bytes BLOB NOT NULL,
+        byte_size INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(squawk_id, position)
+      );
+    `);
+  }
+  // Index the FK so per-squawk lookups/ordering don't scan the whole table.
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_squawk_images_squawk ON squawk_images(squawk_id)",
+  );
 }
 
 /** Current timestamp as an ISO-8601 string. */
@@ -122,15 +175,26 @@ export function deleteList(id: number): boolean {
 
 /**
  * The stored squawk columns, exactly as they come back from `RETURNING *` /
- * `SELECT *`. The public `Squawk` adds the derived `has_image` flag on top; DB
- * helpers project a `SquawkRow` up to a `Squawk` by attaching that flag (either
- * a known constant, or an `EXISTS`/lookup against `squawk_images`).
+ * `SELECT *`. The public `Squawk` adds the derived `image_ids` list (and the
+ * `has_image` flag derived from it) on top; DB helpers project a `SquawkRow` up
+ * to a `Squawk` by attaching those from a lookup against `squawk_images`.
  */
-type SquawkRow = Omit<Squawk, "has_image">;
+type SquawkRow = Omit<Squawk, "has_image" | "image_ids">;
 
-/** Coerce SQLite's 0/1 `EXISTS` result into the `has_image` boolean. */
-function rowWithImageFlag(row: SquawkRow & { has_image: number }): Squawk {
-  return { ...row, has_image: !!row.has_image };
+/**
+ * Correlated subquery yielding a JSON array of a squawk's image ids ordered by
+ * `position` (upload order). The inner ordered subquery fixes the row order that
+ * `json_group_array` then aggregates, so the array is position-sorted; an
+ * imageless squawk yields `'[]'`. Bytes never leave the DB — only ids ride here.
+ */
+const IMAGE_IDS_JSON_SELECT =
+  "(SELECT json_group_array(id) FROM (SELECT id FROM squawk_images WHERE squawk_id = squawks.id ORDER BY position ASC)) AS image_ids_json";
+
+/** Project a raw row (+ its `image_ids_json`) into the public `Squawk`. */
+function projectSquawk(row: SquawkRow & { image_ids_json: string }): Squawk {
+  const { image_ids_json, ...rest } = row;
+  const image_ids = JSON.parse(image_ids_json) as number[];
+  return { ...rest, image_ids, has_image: image_ids.length > 0 };
 }
 
 /**
@@ -167,8 +231,8 @@ function getSquawkTx(): SquawkTx {
            VALUES (?, ?, ?, 'open', ?, ?, ?) RETURNING *`,
         )
         .get(listId, seqRow.seq, text, initials, ts, ts) as SquawkRow;
-      // A just-created squawk has no image yet; RETURNING can't carry a subquery.
-      return { ...row, has_image: false };
+      // A just-created squawk has no images yet; RETURNING can't carry a subquery.
+      return { ...row, image_ids: [], has_image: false };
     },
   );
   return squawkTx;
@@ -218,19 +282,16 @@ export function updateSquawk(
   if (!row) {
     throw new Error(`updateSquawk: squawk ${id} not found`);
   }
-  return { ...row, has_image: squawkHasImage(id) };
+  const image_ids = listSquawkImageIds(id);
+  return { ...row, image_ids, has_image: image_ids.length > 0 };
 }
 
-/** Return one squawk by id (with its derived `has_image`), or null if absent. */
+/** Return one squawk by id (with its derived `image_ids`), or null if absent. */
 export function getSquawk(id: number): Squawk | null {
   const row = getDb()
-    .query(
-      `SELECT squawks.*,
-              EXISTS(SELECT 1 FROM squawk_images WHERE squawk_id = squawks.id) AS has_image
-       FROM squawks WHERE id = ?`,
-    )
-    .get(id) as (SquawkRow & { has_image: number }) | null;
-  return row ? rowWithImageFlag(row) : null;
+    .query(`SELECT squawks.*, ${IMAGE_IDS_JSON_SELECT} FROM squawks WHERE id = ?`)
+    .get(id) as (SquawkRow & { image_ids_json: string }) | null;
+  return row ? projectSquawk(row) : null;
 }
 
 /**
@@ -241,20 +302,19 @@ export function deleteSquawk(id: number): boolean {
   return getDb().query("DELETE FROM squawks WHERE id = ?").run(id).changes > 0;
 }
 
-/** Return a list's squawks, newest first (`seq DESC`), each with `has_image`. */
+/** Return a list's squawks, newest first (`seq DESC`), each with `image_ids`. */
 export function listSquawks(listId: number): Squawk[] {
   const rows = getDb()
     .query(
-      `SELECT squawks.*,
-              EXISTS(SELECT 1 FROM squawk_images WHERE squawk_id = squawks.id) AS has_image
+      `SELECT squawks.*, ${IMAGE_IDS_JSON_SELECT}
        FROM squawks WHERE list_id = ? ORDER BY seq DESC`,
     )
-    .all(listId) as (SquawkRow & { has_image: number })[];
-  return rows.map(rowWithImageFlag);
+    .all(listId) as (SquawkRow & { image_ids_json: string })[];
+  return rows.map(projectSquawk);
 }
 
 // ---------------------------------------------------------------------------
-// Squawk images (one optional image per squawk; bytes stored in-DB)
+// Squawk images (up to MAX_IMAGES_PER_SQUAWK per squawk; bytes stored in-DB)
 // ---------------------------------------------------------------------------
 
 /** An image's stored bytes plus the metadata needed to serve it. */
@@ -266,30 +326,76 @@ export interface SquawkImage {
 }
 
 /**
- * Attach (or replace) the image for a squawk. Upsert on the `squawk_id` PK so
- * re-attaching swaps the bytes rather than erroring. Caller is responsible for
- * validating `mime` (allowlist) and size before calling.
+ * Raised by {@link addSquawkImage} when a squawk already holds the maximum
+ * number of images. The route layer maps this to a `409`.
  */
-export function setSquawkImage(
-  squawkId: number,
-  img: { mime: string; bytes: Uint8Array; byteSize: number },
-): void {
-  getDb()
-    .query(
-      `INSERT INTO squawk_images (squawk_id, mime, bytes, byte_size, created_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(squawk_id) DO UPDATE SET
-         mime = excluded.mime, bytes = excluded.bytes,
-         byte_size = excluded.byte_size, created_at = excluded.created_at`,
-    )
-    .run(squawkId, img.mime, img.bytes, img.byteSize, now());
+export class ImageLimitError extends Error {
+  constructor(public readonly squawkId: number) {
+    super(
+      `squawk ${squawkId} already has the maximum of ${MAX_IMAGES_PER_SQUAWK} images`,
+    );
+    this.name = "ImageLimitError";
+  }
 }
 
-/** Return a squawk's image bytes + mime, or null if it has none. */
-export function getSquawkImage(squawkId: number): SquawkImage | null {
+/**
+ * Append an image to a squawk at the next `position`, up to
+ * {@link MAX_IMAGES_PER_SQUAWK}. Throws {@link ImageLimitError} once the squawk
+ * is full. The count-check and insert run in one transaction so the cap holds
+ * even under concurrent appends. Caller validates `mime` + size first; the FK
+ * enforces that `squawkId` exists. Returns the new image's id and position.
+ */
+export function addSquawkImage(
+  squawkId: number,
+  img: { mime: string; bytes: Uint8Array; byteSize: number },
+): { id: number; position: number } {
+  const db = getDb();
+  return db.transaction(() => {
+    const agg = db
+      .query(
+        "SELECT COUNT(*) AS n, COALESCE(MAX(position), -1) AS maxpos FROM squawk_images WHERE squawk_id = ?",
+      )
+      .get(squawkId) as { n: number; maxpos: number };
+    if (agg.n >= MAX_IMAGES_PER_SQUAWK) {
+      throw new ImageLimitError(squawkId);
+    }
+    const position = agg.maxpos + 1;
+    const row = db
+      .query(
+        `INSERT INTO squawk_images (squawk_id, position, mime, bytes, byte_size, created_at)
+         VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
+      )
+      .get(squawkId, position, img.mime, img.bytes, img.byteSize, now()) as {
+      id: number;
+    };
+    return { id: row.id, position };
+  })();
+}
+
+/** A squawk's image ids ordered by `position` (upload order). Cheap — no BLOBs. */
+export function listSquawkImageIds(squawkId: number): number[] {
+  return (
+    getDb()
+      .query(
+        "SELECT id FROM squawk_images WHERE squawk_id = ? ORDER BY position ASC",
+      )
+      .all(squawkId) as Array<{ id: number }>
+  ).map((r) => r.id);
+}
+
+/**
+ * Return one image's bytes + mime, scoped to its squawk so a mismatched
+ * `(squawkId, imageId)` pair yields null (→ 404) rather than another squawk's image.
+ */
+export function getSquawkImageById(
+  squawkId: number,
+  imageId: number,
+): SquawkImage | null {
   const row = getDb()
-    .query("SELECT mime, bytes, byte_size FROM squawk_images WHERE squawk_id = ?")
-    .get(squawkId) as
+    .query(
+      "SELECT mime, bytes, byte_size FROM squawk_images WHERE id = ? AND squawk_id = ?",
+    )
+    .get(imageId, squawkId) as
     | { mime: string; bytes: Uint8Array<ArrayBuffer>; byte_size: number }
     | null;
   return row
@@ -297,17 +403,14 @@ export function getSquawkImage(squawkId: number): SquawkImage | null {
     : null;
 }
 
-/** Remove a squawk's image. Returns true if a row was deleted. */
-export function deleteSquawkImage(squawkId: number): boolean {
+/** Remove one image (scoped to its squawk). Returns true if a row was deleted. */
+export function deleteSquawkImageById(
+  squawkId: number,
+  imageId: number,
+): boolean {
   return (
-    getDb().query("DELETE FROM squawk_images WHERE squawk_id = ?").run(squawkId)
-      .changes > 0
+    getDb()
+      .query("DELETE FROM squawk_images WHERE id = ? AND squawk_id = ?")
+      .run(imageId, squawkId).changes > 0
   );
-}
-
-/** Whether a squawk currently has an image (cheap existence probe). */
-export function squawkHasImage(squawkId: number): boolean {
-  return !!getDb()
-    .query("SELECT 1 FROM squawk_images WHERE squawk_id = ? LIMIT 1")
-    .get(squawkId);
 }

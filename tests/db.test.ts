@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 // Point the data layer at an in-memory database BEFORE importing it, so this
@@ -13,6 +14,7 @@ const {
   createSquawk,
   updateSquawk,
   listSquawks,
+  migrateSquawkImages,
 } = await import("../src/server/db.ts");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -88,4 +90,82 @@ test("updateSquawk sets state and updated_at", async () => {
   expect(updated.updated_at > s.updated_at).toBe(true);
   // created_at is untouched by an update.
   expect(updated.created_at).toBe(s.created_at);
+});
+
+// --- squawk_images 1:1 → 1:N migration (#127) --------------------------------
+// These build their own throwaway connections (not getDb()'s memoized one) so
+// they can seed the *legacy* table shape and run the migration against it.
+
+test("migrateSquawkImages rebuilds the legacy 1:1 table onto position 0 (idempotent)", () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(
+    "CREATE TABLE squawks (id INTEGER PRIMARY KEY AUTOINCREMENT); INSERT INTO squawks (id) VALUES (1);",
+  );
+  // The legacy 1:1 shape: squawk_id as PK, one image.
+  db.exec(`
+    CREATE TABLE squawk_images (
+      squawk_id INTEGER PRIMARY KEY REFERENCES squawks(id) ON DELETE CASCADE,
+      mime TEXT NOT NULL,
+      bytes BLOB NOT NULL,
+      byte_size INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+  `);
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  db.query(
+    "INSERT INTO squawk_images (squawk_id, mime, bytes, byte_size, created_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(1, "image/png", bytes, bytes.byteLength, "t");
+
+  migrateSquawkImages(db);
+
+  // New shape: own id PK + position; the legacy image is mapped to position 0
+  // with its bytes/mime intact.
+  const cols = (
+    db.query("PRAGMA table_info(squawk_images)").all() as Array<{ name: string }>
+  ).map((c) => c.name);
+  expect(cols).toContain("id");
+  expect(cols).toContain("position");
+
+  const row = db
+    .query(
+      "SELECT squawk_id, position, mime, bytes, byte_size FROM squawk_images",
+    )
+    .get() as {
+    squawk_id: number;
+    position: number;
+    mime: string;
+    bytes: Uint8Array;
+    byte_size: number;
+  };
+  expect(row.squawk_id).toBe(1);
+  expect(row.position).toBe(0);
+  expect(row.mime).toBe("image/png");
+  expect(new Uint8Array(row.bytes)).toEqual(bytes);
+  expect(row.byte_size).toBe(4);
+
+  // Idempotent: a second run is a no-op, and the table now accepts a 2nd image.
+  migrateSquawkImages(db);
+  db.query(
+    "INSERT INTO squawk_images (squawk_id, position, mime, bytes, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(1, 1, "image/png", bytes, bytes.byteLength, "t");
+  const count = (
+    db
+      .query("SELECT COUNT(*) AS n FROM squawk_images WHERE squawk_id = 1")
+      .get() as { n: number }
+  ).n;
+  expect(count).toBe(2);
+});
+
+test("migrateSquawkImages creates the 1:N table fresh on an empty DB", () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("CREATE TABLE squawks (id INTEGER PRIMARY KEY AUTOINCREMENT)");
+  migrateSquawkImages(db);
+  const cols = (
+    db.query("PRAGMA table_info(squawk_images)").all() as Array<{ name: string }>
+  ).map((c) => c.name);
+  for (const c of ["id", "squawk_id", "position", "mime", "bytes", "byte_size"]) {
+    expect(cols).toContain(c);
+  }
 });
