@@ -66,15 +66,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.sha }}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # NOTE: Docker Hub login is deliberately AFTER the build (see flightdeck #20). The
+      # oakandwave Org Access Token is scoped to oakandwave/* only; logging into Docker Hub
+      # before the build makes buildx present it for the oven/bun base pull and fail with
+      # 401. Building with no Docker Hub creds keeps that public pull anonymous.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/wave-engineering/squawkie-talkie
+          # Force the OCI source/url labels lowercase (metadata-action's auto-source would
+          # otherwise bake the org's capitalized "Wave-Engineering" URL).
+          labels: |
+            org.opencontainers.image.source=https://github.com/wave-engineering/squawkie-talkie
+            org.opencontainers.image.url=https://github.com/wave-engineering/squawkie-talkie
           # Bare version tag (no `v` prefix) to match the manual push + Docker/OCI
           # convention: git tag `v0.6.0` → image `0.6.0`. `latest` only on a real
           # tag push, so a backfill of an older tag never drags `latest` backward.
@@ -82,9 +93,37 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{version}},value=${{ github.event.inputs.ref }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name != 'workflow_dispatch' }}
-      - uses: docker/build-push-action@v6
+      - name: Build and push (GHCR)
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Log in to Docker Hub
+        # AFTER the build (see the note above): the OAT is only ever presented to docker.io
+        # for the oakandwave push it is scoped for. Serves both the mirror and Scout below.
+        uses: docker/login-action@v3
+        with:
+          username: oakandwave
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Mirror GHCR tags to Docker Hub oakandwave
+        # Registry migration: copy the just-pushed GHCR tags to docker.io/oakandwave.
+        # imagetools copies cross-registry using each registry's own creds and rebuilds nothing.
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r r; do [ -n "$r" ] && docker buildx imagetools create --tag "docker.io/oakandwave/squawkie-talkie:${r##*:}" "$r"; done <<< "$TAGS"
+
+      - name: Docker Scout — CVE scan the pushed image
+        # Non-blocking; continue-on-error covers ALL failures (auth/infra), so a Scout error
+        # can't red a release whose dual-push already succeeded (flightdeck #20 review).
+        continue-on-error: true
+        uses: docker/scout-action@v1
+        with:
+          command: cves
+          image: docker.io/oakandwave/squawkie-talkie:${{ steps.meta.outputs.version }}
+          only-severities: critical,high
+          write-comment: false
