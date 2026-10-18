@@ -39,15 +39,11 @@ import {
   updateSquawk,
 } from "./db.ts";
 import { broadcast } from "./sse.ts";
-import { MAX_IMAGES_PER_SQUAWK } from "./types.ts";
+import { MAX_IMAGES_PER_SQUAWK, SQUAWK_STATES } from "./types.ts";
 import type { List, SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
-const SQUAWK_STATES: ReadonlySet<string> = new Set<SquawkState>([
-  "open",
-  "retired",
-  "recorded",
-]);
+const VALID_STATES: ReadonlySet<string> = new Set<string>(SQUAWK_STATES);
 
 /** A list as exposed over the API — without the internal `next_seq` counter. */
 export type PublicList = Omit<List, "next_seq">;
@@ -345,7 +341,7 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
   }
 
   if (body.state !== undefined) {
-    if (typeof body.state !== "string" || !SQUAWK_STATES.has(body.state)) {
+    if (typeof body.state !== "string" || !VALID_STATES.has(body.state)) {
       return json({ error: "invalid state" }, 400);
     }
     patch.state = body.state as SquawkState;

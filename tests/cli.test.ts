@@ -53,7 +53,7 @@ afterAll(async () => {
 test("add quick-adds a squawk (creating the list) and normalizes initials", () => {
   const r = sqtk("add", "regression", "first concern");
   expect(r.code).toBe(0);
-  expect(r.out).toContain("#1 [open] first concern  (BOT)");
+  expect(r.out).toContain("#1 ○ [open] first concern  (BOT)");
 });
 
 test("lists shows the created list", () => {
@@ -62,21 +62,59 @@ test("lists shows the created list", () => {
   expect(r.out).toContain("regression");
 });
 
-test("show reflects squawks and (O│R│E) counts", () => {
+test("show reflects squawks and glyph counts, zeros omitted", () => {
   expect(sqtk("add", "regression", "second concern").code).toBe(0);
   const r = sqtk("show", "regression");
   expect(r.code).toBe(0);
-  expect(r.out).toContain("(O2│R0│E0)");
-  expect(r.out).toContain("#1 [open] first concern");
+  expect(r.out.split("\n")[1]).toBe("  ○2");
+  expect(r.out).toContain("#1 ○ [open] first concern");
 });
 
 test("set <list> <seq> --state resolves seq→id and persists", () => {
   const s = sqtk("set", "regression", "1", "--state", "recorded");
   expect(s.code).toBe(0);
-  expect(s.out).toContain("updated #1 [recorded]");
+  expect(s.out).toContain("updated #1 ↗ [recorded]");
   const r = sqtk("show", "regression");
-  expect(r.out).toContain("(O1│R0│E1)");
-  expect(r.out).toContain("#1 [recorded]");
+  expect(r.out.split("\n")[1]).toBe("  ○1 ↗1");
+  expect(r.out).toContain("#1 ↗ [recorded]");
+});
+
+test("set --state confirmed / rejected succeed, and show prints every glyph in state order (#137)", () => {
+  for (const t of ["third", "fourth", "fifth"]) {
+    expect(sqtk("add", "regression", t).code).toBe(0);
+  }
+  // #1 recorded (above), #2 open, #3 confirmed, #4 rejected, #5 retired
+  const c = sqtk("set", "regression", "3", "--state", "confirmed");
+  expect(c.code).toBe(0);
+  expect(c.out).toContain("updated #3 ✓ [confirmed]");
+  const x = sqtk("set", "regression", "4", "--state", "rejected");
+  expect(x.code).toBe(0);
+  expect(x.out).toContain("updated #4 ✗ [rejected]");
+  expect(sqtk("set", "regression", "5", "--state", "retired").code).toBe(0);
+
+  const r = sqtk("show", "regression");
+  expect(r.out.split("\n")[1]).toBe("  ○1 ✓1 ✗1 ◌1 ↗1");
+  expect(r.out).toContain("#3 ✓ [confirmed] third");
+  expect(r.out).toContain("#4 ✗ [rejected] fourth");
+  expect(r.out).toContain("#5 ◌ [retired] fifth");
+});
+
+test("an unknown --state is refused by the server with a clear message", () => {
+  const r = sqtk("set", "regression", "2", "--state", "maybe");
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("invalid state");
+});
+
+test("sqtk's glyph map matches STATE_GLYPHS in the server types (no drift)", async () => {
+  const { SQUAWK_STATES, STATE_GLYPHS } = await import("../src/server/types.ts");
+  const src = await Bun.file(CLI).text();
+  const states = src.match(/def states: (\[[^\]]*\]);/)?.[1];
+  const glyphs = src.match(/def glyph: (\{[^}]*\})/)?.[1];
+  expect(states).toBeDefined();
+  expect(glyphs).toBeDefined();
+  expect(JSON.parse(states!)).toEqual([...SQUAWK_STATES]);
+  // The jq object literal uses bare keys; quote them to read it as JSON.
+  expect(JSON.parse(glyphs!.replace(/(\w+):/g, '"$1":'))).toEqual(STATE_GLYPHS);
 });
 
 test("unknown list exits non-zero with a clear message", () => {

@@ -3,9 +3,9 @@
 # Lets AI agents manage squawklists without hand-writing HTTP calls.
 #
 #   sqtk lists                                     list all squawk lists
-#   sqtk show   <list>                             show a list + its squawks + (O│R│E) counts
+#   sqtk show   <list>                             show a list + its squawks + glyph counts
 #   sqtk add    <list> "<text>"                    log a squawk (creates the list if new)
-#   sqtk set    <list> <seq> [--state S] [--text T]  update a squawk (S: open|retired|recorded)
+#   sqtk set    <list> <seq> [--state S] [--text T]  update a squawk (S: open|confirmed|rejected|retired|recorded)
 #   sqtk new    <name>                             create an empty list
 #   sqtk rmlist <name> --yes                        delete a list (cascades — ALL its squawks go)
 #
@@ -16,9 +16,12 @@
 # Flags:
 #   --json            emit raw API JSON instead of formatted text
 #
-# Note: squawks are never deleted — they change state (open → retired/recorded).
-# To "remove" a squawk, `sqtk set <list> <seq> --state retired`. Squawks are referenced by
-# their per-list number (`#seq`, what `show`/`add` print), not the internal DB id.
+# Note: squawks are never deleted — they change state (open → confirmed/rejected/retired/
+# recorded). confirmed (✓) and rejected (✗) are a yes/no verdict; to "remove" a squawk with
+# no verdict, `sqtk set <list> <seq> --state retired`. Squawks are referenced by their
+# per-list number (`#seq`, what `show`/`add` print), not the internal DB id.
+#
+# Each state prints with its glyph: ○ open · ✓ confirmed · ✗ rejected · ◌ retired · ↗ recorded.
 
 set -euo pipefail
 
@@ -70,10 +73,22 @@ api() {
 
 urienc() { jq -rn --arg s "${1:-}" '$s|@uri'; }
 
+# jq definitions prepended to every formatted filter. The state order and glyphs mirror
+# SQUAWK_STATES / STATE_GLYPHS in src/server/types.ts; tests/cli.test.ts holds them in step.
+#   glyph   — a state's glyph (an unknown state prints "?")
+#   tally   — "○3 ✓2 ✗1 ◌4 ↗1" for an array of squawks, in state order, zeros omitted
+# shellcheck disable=SC2016  # the $vars here are jq's, not the shell's
+JQ_DEFS='
+def states: ["open","confirmed","rejected","retired","recorded"];
+def glyph: {open:"○",confirmed:"✓",rejected:"✗",retired:"◌",recorded:"↗"}[.] // "?";
+def tally: . as $sq | [states[] as $s | ([$sq[] | select(.state==$s)] | length) as $n
+  | select($n > 0) | "\($s|glyph)\($n)"] | join(" ");
+'
+
 # emit RAW_JSON JQ_FILTER : print formatted text, or raw JSON under --json.
 emit() {
   local data="$1"; shift
-  if (( JSON_OUT )); then printf '%s\n' "$data" | jq .; else printf '%s' "$data" | jq -r "$@"; fi
+  if (( JSON_OUT )); then printf '%s\n' "$data" | jq .; else printf '%s' "$data" | jq -r "$JQ_DEFS $1"; fi
 }
 
 # Resolve a list name to its full record (list + squawks); dies on 404.
@@ -89,9 +104,8 @@ cmd_show() {
   local data; data="$(get_list "$1")"
   emit "$data" '
     "List #\(.id)  \(.name)",
-    "  (O\([.squawks[]|select(.state=="open")]|length)│R\([.squawks[]|select(.state=="retired")]|length)│E\([.squawks[]|select(.state=="recorded")]|length))",
     (if (.squawks|length)==0 then "  (no squawks)"
-     else (.squawks[] | "  #\(.seq) [\(.state)] \(.text)  (\(.initials))") end)'
+     else "  \(.squawks|tally)", (.squawks[] | "  #\(.seq) \(.state|glyph) [\(.state)] \(.text)  (\(.initials))") end)'
 }
 
 cmd_add() {
@@ -99,12 +113,12 @@ cmd_add() {
   local ini; ini="$(resolve_initials)"
   local body; body="$(jq -n --arg l "$1" --arg t "$2" --arg i "$ini" '{list_name:$l,text:$t,initials:$i}')"
   local data; data="$(api POST /api/squawks "$body")"
-  emit "$data" '"squawked #\(.seq) [\(.state)] \(.text)  (\(.initials))"'
+  emit "$data" '"squawked #\(.seq) \(.state|glyph) [\(.state)] \(.text)  (\(.initials))"'
 }
 
 cmd_set() {
   [[ $# -ge 2 && -n "${1:-}" && "${2:-}" =~ ^[0-9]+$ ]] \
-    || die "usage: sqtk set <list> <seq> [--state open|retired|recorded] [--text \"<t>\"]"
+    || die "usage: sqtk set <list> <seq> [--state open|confirmed|rejected|retired|recorded] [--text \"<t>\"]"
   local list="$1" seq="$2"; shift 2
   local state="" text="" have=0
   while [[ $# -gt 0 ]]; do
@@ -122,7 +136,7 @@ cmd_set() {
   local body; body="$(jq -n --arg i "$ini" --arg s "$state" --arg t "$text" \
     '{initials:$i} + (if $s!="" then {state:$s} else {} end) + (if $t!="" then {text:$t} else {} end)')"
   local data; data="$(api PATCH "/api/squawks/$id" "$body")"
-  emit "$data" '"updated #\(.seq) [\(.state)] \(.text)  (\(.initials))"'
+  emit "$data" '"updated #\(.seq) \(.state|glyph) [\(.state)] \(.text)  (\(.initials))"'
 }
 
 cmd_new() {
@@ -149,9 +163,10 @@ usage() {
 sqtk — client CLI for Squawkie-Talkie
 
   sqtk lists                                       list all squawk lists
-  sqtk show   <list>                               show a list + its squawks + (O│R│E) counts
+  sqtk show   <list>                               show a list + its squawks + glyph counts
   sqtk add    <list> "<text>"                      log a squawk (creates the list if new)
-  sqtk set    <list> <seq> [--state S] [--text T]  update a squawk (S: open|retired|recorded)
+  sqtk set    <list> <seq> [--state S] [--text T]  update a squawk
+                                                   (S: open|confirmed|rejected|retired|recorded)
   sqtk new    <name>                               create an empty list
   sqtk rmlist <name> --yes                          delete a list (cascades)
 
@@ -159,6 +174,7 @@ sqtk — client CLI for Squawkie-Talkie
 
 env: SQUAWK_URL (REQUIRED — e.g. http://localhost:7700) · SQUAWK_INITIALS (else from agent identity)
 squawks are referenced by their per-list #seq (what show/add print), and change state, never delete.
+states: ○ open · ✓ confirmed · ✗ rejected · ◌ retired · ↗ recorded
 EOF
 }
 

@@ -12,7 +12,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const DETAIL_FLAG = "st.coach.detail";
 const ENTRY_COPY = "Now you're cooking";
-const STATE_COPY = "Open, retired, or recorded";
+const STATE_COPY = "○ open, ✓ confirmed, ✗ rejected, ◌ retired, or ↗ recorded";
 
 interface List {
   id: number;
@@ -160,8 +160,8 @@ test.describe("Detail-page coaching (progressive)", () => {
     await expect(counter).toHaveText("4 / 6"); // hover — its own mark
     await expect(body).toContainText("Hover any squawk");
     await page.keyboard.press("Enter");
-    await expect(counter).toHaveText("5 / 6"); // metrics — labels O/R/E
-    await expect(body).toContainText("Open · Retired · rEcorded");
+    await expect(counter).toHaveText("5 / 6"); // metrics — one glyph per state
+    await expect(body).toContainText("one glyph per state");
     await page.keyboard.press("Enter");
     await expect(counter).toHaveText("6 / 6"); // realtime — its own mark
     await expect(body).toContainText("Everybody sees this live");

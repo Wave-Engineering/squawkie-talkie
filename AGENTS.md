@@ -9,7 +9,7 @@ names the invariants you must not break. It is **codebase orientation**; for *wo
 
 Squawkie-Talkie: a self-hosted, real-time team "squawk list." One Bun process serves a
 vanilla-TS client and a JSON+SSE API backed by `bun:sqlite`. Two entities: **Squawk
-Lists** and **Squawks** (state: open/retired/recorded). Read [`README.md`](README.md)
+Lists** and **Squawks** (state: open/confirmed/rejected/retired/recorded). Read [`README.md`](README.md)
 for the feature set and [`docs/architecture.md`](docs/architecture.md) for the design.
 
 ## Squawking from the CLI (`sqtk`)
@@ -23,8 +23,9 @@ from `./.claude/agent-identity.json` (override with `SQUAWK_INITIALS`).
 
 ```bash
 sqtk add    "wave-engine" "ENG-1 corrupts state on blocked exit"   # log (creates the list if new)
-sqtk show   "wave-engine"                                          # list + squawks + (O│R│E)
+sqtk show   "wave-engine"                                          # list + squawks + glyph counts
 sqtk set    "wave-engine" 3 --state recorded                       # retire/record/reopen by #seq
+sqtk set    "wave-engine" 4 --state confirmed                      # a yes/no verdict: confirmed|rejected
 sqtk lists                                                         # all lists  ·  sqtk help
 ```
 
@@ -125,5 +126,8 @@ bun run build      # → public/dist/app.js (run before prod serve)
   add a wrapper in `client/api.ts`; cover in `tests/api.test.ts`.
 - **New client view:** render fn + `registerView(...)` (see `lists.ts`/`detail.ts`); add a
   `realtime.ts` binding if it shows live data; DOM-test it.
-- **New squawk state:** extend `SquawkState` + the DB `CHECK` + `STATES`/`SQUAWK_STATES` +
-  state CSS + `countByState`.
+- **New squawk state:** add it to `SQUAWK_STATES` and `STATE_GLYPHS` in `types.ts`. The type,
+  the DB `CHECK`, API validation, the client dropdown, cycling and counts all derive from them,
+  and `migrateSquawkStates` widens an existing DB on startup, so never edit the `CHECK` by hand.
+  Mirror both in `sqtk`'s `JQ_DEFS` (`tests/cli.test.ts` fails on drift), then add the CSS:
+  `--state-*`, `.state-*`, `.count--*`, the row edge and, for a closed state, the strike-through.
