@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-18 — Verdict states & signed images
+
 ### Added
 - **Verdict states `confirmed` (`✓`) and `rejected` (`✗`)**, so a yes/no answer on a squawk
   is one dropdown change and machine-readable from its state, not parsed from its text
@@ -29,6 +31,12 @@ at `v0.3.0`**.
   self-detecting table rebuild. Rows keep their ids, photos are untouched (foreign keys are
   held off around the rebuild so the drop cannot cascade), and the id high-water mark is
   carried over.
+
+### CI
+- **The published image is signed** with the shared `oaw-sign-image` action (#135, #136).
+- **The published image is mirrored to Docker Hub** (`docker.io/oakandwave/squawkie-talkie`),
+  decoupled from the build: the image is built and pushed to GHCR, and only then are its
+  tags copied to Docker Hub with `buildx imagetools create` (#133, #134).
 
 ## [0.7.0] — 2026-07-16 — Multiple photos per squawk & carousel viewer
 
