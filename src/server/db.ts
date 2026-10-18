@@ -11,8 +11,27 @@
  */
 
 import { Database } from "bun:sqlite";
-import { MAX_IMAGES_PER_SQUAWK } from "./types.ts";
+import { MAX_IMAGES_PER_SQUAWK, SQUAWK_STATES } from "./types.ts";
 import type { List, Squawk, SquawkState } from "./types.ts";
+
+/**
+ * `CREATE TABLE` for `squawks` under `name`, its `state` CHECK built from
+ * `SQUAWK_STATES` so the constraint cannot drift from the type. Shared by the
+ * fresh-DB create and the state migration's rebuild.
+ */
+function squawksTableSql(name: string): string {
+  const states = SQUAWK_STATES.map((s) => `'${s}'`).join(",");
+  return `CREATE TABLE IF NOT EXISTS ${name} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+      seq INTEGER NOT NULL,
+      text TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL DEFAULT 'open' CHECK(state IN (${states})),
+      initials TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`;
+}
 
 /**
  * Lazily-opened shared connection. The DB is NOT opened at import time: the
@@ -39,18 +58,11 @@ export function getDb(): Database {
       created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS squawks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
-      seq INTEGER NOT NULL,
-      text TEXT NOT NULL DEFAULT '',
-      state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','retired','recorded')),
-      initials TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
+    ${squawksTableSql("squawks")};
   `);
+  // An existing DB keeps the CHECK it was created with (CREATE IF NOT EXISTS is a
+  // no-op over it), so widen it in place when it predates a state (#137).
+  migrateSquawkStates(db);
   // squawk_images owns its own lifecycle below: the 1:N schema plus a one-time,
   // self-detecting migration from the legacy 1:1 table (squawk_id as PK). Kept
   // out of the block above so the migration can rebuild an existing table before
@@ -58,6 +70,71 @@ export function getDb(): Database {
   migrateSquawkImages(db);
   connection = db;
   return connection;
+}
+
+/**
+ * Ensure the `squawks.state` CHECK admits every state in `SQUAWK_STATES`,
+ * rebuilding the table if it was created before one of them existed (#137: the
+ * original `('open','retired','recorded')` gains `confirmed` and `rejected`).
+ *
+ * SQLite cannot alter a CHECK, so this is the documented table rebuild: create
+ * `squawks_new`, copy every row with its `id` intact, drop, rename. Foreign keys
+ * are switched OFF around it, because with them on, `DROP TABLE squawks` would
+ * cascade-delete every row of `squawk_images` (its FK is `ON DELETE CASCADE`).
+ * The pragma is a no-op inside a transaction, so it brackets the transaction
+ * rather than sitting in it, and `foreign_key_check` proves no reference broke
+ * before the rebuild commits. The AUTOINCREMENT high-water mark is carried over
+ * too: copying rows only raises it to max(id), which would let the id of a
+ * deleted newest squawk be reused.
+ *
+ * Idempotent and self-detecting: it reads the table's stored SQL and does nothing
+ * when every state is already there, or when the table does not exist yet.
+ * Exported so the migration can be unit-tested against a throwaway connection.
+ */
+export function migrateSquawkStates(db: Database): void {
+  const row = db
+    .query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'squawks'")
+    .get() as { sql: string } | null;
+  if (!row || SQUAWK_STATES.every((s) => row.sql.includes(`'${s}'`))) {
+    return;
+  }
+
+  const fkWasOn =
+    (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number })
+      .foreign_keys === 1;
+  db.exec("PRAGMA foreign_keys = OFF");
+  try {
+    db.transaction(() => {
+      const seqRow = db
+        .query("SELECT seq FROM sqlite_sequence WHERE name = 'squawks'")
+        .get() as { seq: number } | null;
+      db.exec(`
+        DROP TABLE IF EXISTS squawks_new;
+        ${squawksTableSql("squawks_new")};
+        INSERT INTO squawks_new (id, list_id, seq, text, state, initials, created_at, updated_at)
+          SELECT id, list_id, seq, text, state, initials, created_at, updated_at FROM squawks;
+        DROP TABLE squawks;
+        ALTER TABLE squawks_new RENAME TO squawks;
+      `);
+      if (seqRow) {
+        // The copy left a row only if it copied any squawks, so set it outright.
+        db.query("DELETE FROM sqlite_sequence WHERE name = 'squawks'").run();
+        db.query(
+          "INSERT INTO sqlite_sequence (name, seq) VALUES ('squawks', MAX(?, (SELECT COALESCE(MAX(id), 0) FROM squawks)))",
+        ).run(seqRow.seq);
+      }
+      const broken = db.query("PRAGMA foreign_key_check").all();
+      if (broken.length > 0) {
+        throw new Error(
+          `migrateSquawkStates: ${broken.length} foreign-key violation(s) after rebuild`,
+        );
+      }
+    })();
+  } finally {
+    if (fkWasOn) {
+      db.exec("PRAGMA foreign_keys = ON");
+    }
+  }
 }
 
 /**

@@ -46,11 +46,13 @@ Everything functional is (or will be) automated; a human only judges feel. On
 
 - [ ] Header reads clean — logo glow, wordmark tracking, sticky behavior.
 - [ ] Background grid/glow is present but subtle (not noisy).
-- [ ] State colors are clearly distinguishable at a glance (open vs retired vs recorded).
+- [ ] State colors are clearly distinguishable at a glance (open, confirmed, rejected,
+  retired, recorded), and each still reads correctly in monochrome by its glyph alone.
 - [ ] Focused input/row "lift" feels responsive, not jumpy.
-- [ ] Recorded strike-through reads as "filed elsewhere," not as a glitch.
+- [ ] The closed-state strike-through (confirmed, rejected, retired, recorded) reads as
+  "dealt with," not as a glitch.
 - [ ] Generous whitespace between rows; nothing feels crowded at the margins.
-- [ ] Hover recorder badge and `(O│R│E)` counts are legible and well-placed.
+- [ ] Hover recorder badge and the glyph counts are legible and well-placed.
 
 ## CI
 

@@ -288,18 +288,75 @@ test("Left/Right arrows cycle squawk state in nav mode", async () => {
   const select10 = row10.querySelector<HTMLSelectElement>("select")!;
   const input10 = row10.querySelector<HTMLInputElement>("input")!;
 
-  // Starts as "open"
+  // Starts as "open"; Right walks all five states in order and wraps (#137).
   expect(select10.value).toBe("open");
-  // Right → forward → retired
-  press(input10, "ArrowRight");
-  expect(select10.value).toBe("retired");
-  expect(row10.classList.contains("state-retired")).toBe(true);
-  // Right → forward → recorded
-  press(input10, "ArrowRight");
+  for (const next of ["confirmed", "rejected", "retired", "recorded", "open"]) {
+    press(input10, "ArrowRight");
+    expect(select10.value).toBe(next);
+    expect(row10.classList.contains(`state-${next}`)).toBe(true);
+  }
+  // Exactly one state class at a time — the old one is always removed.
+  expect(
+    [...row10.classList].filter((c) => c.startsWith("state-")),
+  ).toEqual(["state-open"]);
+  // Left → backward → recorded → retired
+  press(input10, "ArrowLeft");
   expect(select10.value).toBe("recorded");
-  // Left → backward → retired
   press(input10, "ArrowLeft");
   expect(select10.value).toBe("retired");
+});
+
+// --- #137: every state shows its glyph -----------------------------------------
+
+test("the state dropdown offers all five states, each with its glyph", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const select = container.querySelector<HTMLSelectElement>(
+    '[data-squawk-id="10"] select',
+  )!;
+  expect([...select.options].map((o) => [o.value, o.textContent])).toEqual([
+    ["open", "○ open"],
+    ["confirmed", "✓ confirmed"],
+    ["rejected", "✗ rejected"],
+    ["retired", "◌ retired"],
+    ["recorded", "↗ recorded"],
+  ]);
+});
+
+test("a remote change to each state shows that state's glyph and class on the row", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const row = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const select = row.querySelector<HTMLSelectElement>("select")!;
+  const glyphs: Record<string, string> = {
+    open: "○",
+    confirmed: "✓",
+    rejected: "✗",
+    retired: "◌",
+    recorded: "↗",
+  };
+  for (const [state, glyph] of Object.entries(glyphs)) {
+    applyEvent(
+      { type: "squawk.updated", squawk: mkSquawk(10, 2, state) },
+      { view: activeView(), activeElement: null },
+    );
+    expect(select.value).toBe(state);
+    // The shown (selected) option carries the glyph, so the row reads correctly
+    // in monochrome; the class drives color + the closed-state strike-through.
+    // (options[selectedIndex], not selectedOptions: happy-dom leaves the latter
+    // stale after a programmatic `value` set.)
+    expect(select.options[select.selectedIndex]!.textContent).toBe(
+      `${glyph} ${state}`,
+    );
+    expect(row.classList.contains(`state-${state}`)).toBe(true);
+  }
 });
 
 // --- Vi-mode: nav-focus visual class -----------------------------------------
@@ -413,9 +470,9 @@ test("a remote update refreshes the recorder initials", async () => {
   expect(badge.textContent).toBe("ZZ");
 });
 
-// --- Phase 2: (O│R│E) counts ------------------------------------------------
+// --- Phase 2 / #137: glyph counts --------------------------------------------
 
-test("the (O│R│E) counts render and update live on a state change", async () => {
+test("the glyph counts render, omit zeros, and update live on a state change", async () => {
   const { renderList } = await import("../src/client/detail.ts");
   const { applyEvent, activeView } = await import("../src/client/realtime.ts");
   const container = document.createElement("div");
@@ -423,24 +480,33 @@ test("the (O│R│E) counts render and update live on a state change", async ()
   await renderList(container, "1");
 
   const counts = container.querySelector<HTMLElement>(".detail__counts")!;
-  const cell = (s: string) =>
-    counts.querySelector<HTMLElement>(`.count--${s}`)!.textContent;
+  const cells = () =>
+    [...counts.querySelectorAll<HTMLElement>(".count")].map((c) => [
+      c.className,
+      c.textContent,
+    ]);
 
-  // both seeded squawks start open
-  expect([cell("open"), cell("retired"), cell("recorded")]).toEqual([
-    "2",
-    "0",
-    "0",
+  // both seeded squawks start open; every zero-count state is omitted
+  expect(cells()).toEqual([["count count--open", "○2"]]);
+  expect(counts.textContent).toBe("○2");
+
+  applyEvent(
+    { type: "squawk.updated", squawk: mkSquawk(10, 2, "confirmed") },
+    { view: activeView(), activeElement: null },
+  );
+  expect(cells()).toEqual([
+    ["count count--open", "○1"],
+    ["count count--confirmed", "✓1"],
   ]);
 
   applyEvent(
-    { type: "squawk.updated", squawk: mkSquawk(10, 2, "recorded") },
+    { type: "squawk.updated", squawk: mkSquawk(11, 1, "rejected") },
     { view: activeView(), activeElement: null },
   );
-  expect([cell("open"), cell("retired"), cell("recorded")]).toEqual([
-    "1",
-    "0",
-    "1",
+  // open dropped out at zero; the tallies stay in state order
+  expect(cells()).toEqual([
+    ["count count--confirmed", "✓1"],
+    ["count count--rejected", "✗1"],
   ]);
 });
 

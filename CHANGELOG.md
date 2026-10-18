@@ -7,6 +7,29 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **Verdict states `confirmed` (`✓`) and `rejected` (`✗`)**, so a yes/no answer on a squawk
+  is one dropdown change and machine-readable from its state, not parsed from its text
+  (#137). `PATCH /api/squawks/:id`, the export and `sqtk set --state` accept them.
+- **A glyph for every state**: `○` open, `✓` confirmed, `✗` rejected, `◌` retired, `↗`
+  recorded. It shows in the dropdown, on the row, in the counts and in `sqtk` output.
+
+### Changed
+- **The counts read as glyph tallies**: `(O│R│E)` becomes `○3 ✓2 ✗1 ◌4 ↗1`, in state
+  order, with zero-count states omitted. `sqtk show` prints the same line.
+- **Every closed state is struck through** while idle (confirmed, rejected, retired,
+  recorded); before, only recorded was. Confirmed is blue and rejected red, never red/green;
+  the glyph carries the meaning in monochrome.
+- **`←/→` cycles all five states**: open → confirmed → rejected → retired → recorded.
+  `dd` (retire) and `yy` (record + copy) are unchanged.
+- **`sqtk` add/set/show print each squawk's glyph** before its `[state]`.
+
+### Migration
+- The `squawks.state` CHECK constraint is widened in place on startup by an idempotent,
+  self-detecting table rebuild. Rows keep their ids, photos are untouched (foreign keys are
+  held off around the rebuild so the drop cannot cascade), and the id high-water mark is
+  carried over.
+
 ## [0.7.0] — 2026-07-16 — Multiple photos per squawk & carousel viewer
 
 ### Added

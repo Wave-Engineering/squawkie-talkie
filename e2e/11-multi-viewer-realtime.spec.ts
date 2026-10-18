@@ -103,6 +103,55 @@ test.describe("Multi-viewer realtime", () => {
     await ctxB.close();
   });
 
+  test("confirmed shows ✓, the strike-through and blue, live in a second viewer (#137)", async ({
+    browser,
+    baseURL,
+  }) => {
+    const ctxA = await browser.newContext();
+    const ctxB = await browser.newContext();
+    await ctxA.addCookies([{ name: "st_initials", value: "AA", url: baseURL! }]);
+    await ctxB.addCookies([{ name: "st_initials", value: "BB", url: baseURL! }]);
+    await markCoachSeen(ctxA);
+    await markCoachSeen(ctxB);
+
+    const pageA = await ctxA.newPage();
+    const pageB = await ctxB.newPage();
+
+    await pageA.goto("/");
+    await pageA.fill(".lists__new-input", "VerdictSync");
+    await pageA.click(".lists__new-button");
+    await expect(pageA.locator(".squawk-row--new .squawk-row__text")).toBeFocused();
+    const entryA = pageA.locator(".squawk-row--new .squawk-row__text");
+    await entryA.fill("ship it?");
+    await entryA.press("Enter");
+    await expect(pageA.locator(".detail__counts")).toHaveText("○1");
+
+    await pageB.goto(pageA.url());
+    await expect(pageB.locator("[data-squawk-id]")).toHaveCount(1);
+
+    // B answers yes with one dropdown change.
+    await pageB.locator("[data-squawk-id] select").first().selectOption("confirmed");
+
+    // Both viewers: the glyph names the state, the text is struck through, and the
+    // row's edge is blue (#3b82f6) — the color reinforcing the glyph, not replacing it.
+    for (const page of [pageB, pageA]) {
+      const row = page.locator("[data-squawk-id]").first();
+      await expect(row).toHaveClass(/state-confirmed/, { timeout: 5000 });
+      const select = row.locator("select");
+      await expect(select).toHaveValue("confirmed");
+      await expect(select.locator("option:checked")).toHaveText("✓ confirmed");
+      await expect(row.locator(".squawk-row__text")).toHaveCSS(
+        "text-decoration-line",
+        "line-through",
+      );
+      await expect(row).toHaveCSS("border-left-color", "rgb(59, 130, 246)");
+      await expect(page.locator(".detail__counts")).toHaveText("✓1");
+    }
+
+    await ctxA.close();
+    await ctxB.close();
+  });
+
   test("remote update does NOT clobber a focused input", async ({
     browser,
     baseURL,

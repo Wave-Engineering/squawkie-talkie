@@ -35,12 +35,17 @@ implementation; for design see [`architecture.md`](architecture.md).
 - **R-13** **Esc** in an existing row restores the last-saved text and drops the pending
   autosave; **Esc** in the new-squawk box clears it.
 - **R-14** **↑/↓** move focus between rows (and the top box); no wrap at the ends.
-- **R-15** The state dropdown sets **open / retired / recorded**; the row recolors per state.
+- **R-15** The state dropdown sets **open `○` / confirmed `✓` / rejected `✗` / retired `◌` /
+  recorded `↗`**, each option showing its glyph. The row recolors per state (confirmed blue,
+  rejected red), and every state but open is struck through while idle, so no state relies on
+  color alone. `←/→` cycles all five in that order; `dd` still retires and `yy` still records.
+  Existing squawks migrate to the widened state set without loss.
 - **R-16** Each squawk shows its `seq` as a stable identifier; `seq` is per-list, monotonic,
   and never reused (gaps after deletes are expected).
 - **R-17** Hovering (or focusing) a squawk reveals the recorder's initials.
-- **R-18** The list header shows the name and live **`(O│R│E)`** counts (open/retired/
-  recorded), each state-distinct; counts update on create, state change, and remote update.
+- **R-18** The list header shows the name and live **glyph counts** (`○3 ✓2 ✗1 ◌4 ↗1`), in
+  state order with zero-count states omitted, each state-distinct; counts update on create,
+  state change, and remote update. `sqtk show` prints the same tally and each squawk's glyph.
 
 ## Realtime
 

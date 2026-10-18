@@ -13,13 +13,15 @@ import {
 
 test("stateClass maps state -> css class", () => {
   expect(stateClass("open")).toBe("state-open");
+  expect(stateClass("confirmed")).toBe("state-confirmed");
+  expect(stateClass("rejected")).toBe("state-rejected");
   expect(stateClass("retired")).toBe("state-retired");
   expect(stateClass("recorded")).toBe("state-recorded");
 });
 
 // --- countByState ------------------------------------------------------------
 
-test("countByState tallies open / retired / recorded", () => {
+test("countByState tallies every state", () => {
   const sq = (id: number, state: Squawk["state"]): Squawk => ({
     id,
     list_id: 1,
@@ -32,15 +34,24 @@ test("countByState tallies open / retired / recorded", () => {
     has_image: false,
     image_ids: [],
   });
-  expect(countByState([])).toEqual({ open: 0, retired: 0, recorded: 0 });
+  expect(countByState([])).toEqual({
+    open: 0,
+    confirmed: 0,
+    rejected: 0,
+    retired: 0,
+    recorded: 0,
+  });
   expect(
     countByState([
       sq(1, "open"),
       sq(2, "open"),
       sq(3, "retired"),
       sq(4, "recorded"),
+      sq(5, "confirmed"),
+      sq(6, "rejected"),
+      sq(7, "rejected"),
     ]),
-  ).toEqual({ open: 2, retired: 1, recorded: 1 });
+  ).toEqual({ open: 2, confirmed: 1, rejected: 2, retired: 1, recorded: 1 });
 });
 
 // --- debounce ----------------------------------------------------------------
@@ -130,16 +141,20 @@ test("enter handler ignores non-Enter keys", () => {
 
 // --- cycleState ---------------------------------------------------------------
 
-test("cycleState forward wraps through open → retired → recorded → open", () => {
-  expect(cycleState("open", "forward")).toBe("retired");
+test("cycleState forward visits all five states and wraps", () => {
+  expect(cycleState("open", "forward")).toBe("confirmed");
+  expect(cycleState("confirmed", "forward")).toBe("rejected");
+  expect(cycleState("rejected", "forward")).toBe("retired");
   expect(cycleState("retired", "forward")).toBe("recorded");
   expect(cycleState("recorded", "forward")).toBe("open");
 });
 
-test("cycleState backward wraps through open → recorded → retired → open", () => {
+test("cycleState backward visits all five states and wraps", () => {
   expect(cycleState("open", "backward")).toBe("recorded");
   expect(cycleState("recorded", "backward")).toBe("retired");
-  expect(cycleState("retired", "backward")).toBe("open");
+  expect(cycleState("retired", "backward")).toBe("rejected");
+  expect(cycleState("rejected", "backward")).toBe("confirmed");
+  expect(cycleState("confirmed", "backward")).toBe("open");
 });
 
 // --- fitWithin ---------------------------------------------------------------

@@ -192,6 +192,10 @@ another — you should see a `data: {"type":"list.created",…}` frame.
 
 ## Upgrades
 
-Pull, `bun install`, `bun run build`, restart the process. The schema is created with
-`CREATE TABLE IF NOT EXISTS`; there is no migration framework yet, so additive schema
-changes are safe but destructive ones need a manual migration.
+Pull, `bun install`, `bun run build`, restart the process. **Back up `squawk.db` first**
+(stop the process and copy the file): startup may rewrite the schema. The schema is created
+with `CREATE TABLE IF NOT EXISTS`, and then self-detecting, idempotent migrations bring an
+older DB up to date: `migrateSquawkImages` (photos 1:1 → 1:N) and `migrateSquawkStates`
+(rebuilds `squawks` to widen its state `CHECK`, keeping every row, id and photo). Each runs
+once and is a no-op afterwards. There is no general migration framework, so any other
+destructive schema change still needs a manual migration.

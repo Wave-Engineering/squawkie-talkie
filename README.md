@@ -8,8 +8,8 @@ everything; changes sync live across viewers.
 Two concepts only: **Squawk Lists** and **Squawks**.
 
 - **Squawk List** — a named collection of squawks (e.g. *Sprint 7 Regression*).
-- **Squawk** — one line of concern, numbered, with a state (**open / retired /
-  recorded**) and the recorder's initials.
+- **Squawk** — one line of concern, numbered, with a state (**open / confirmed /
+  rejected / retired / recorded**) and the recorder's initials.
 
 ## Features
 
@@ -17,12 +17,14 @@ Two concepts only: **Squawk Lists** and **Squawks**.
 - **Lists screen** — create, open, delete (inline confirm), and **export a list to JSON**.
 - **Squawk editor** — newest-on-top stack; an always-empty top box (type, **Enter**,
   you're on the next line); **autosave** on blur and after 10s idle; per-squawk **state
-  dropdown** with distinct color schemes.
+  dropdown** — `○` open, `✓` confirmed, `✗` rejected, `◌` retired, `↗` recorded — where
+  the glyph carries the meaning and color only reinforces it (confirmed blue, rejected red,
+  never red/green), and every closed state is struck through.
 - **Keyboard-first** — **Enter** commits, **Esc** reverts to last-saved, **↑/↓** move
   between squawks.
 - **Real-time** — changes by other viewers appear live (Server-Sent Events,
   last-write-wins); the box you're actively typing in is never clobbered.
-- **`(O│R│E)` counts** — open / retired / recorded tallies on each list, live.
+- **Glyph counts** — `○3 ✓2 ✗1 ◌4 ↗1` tallies on each list, live; empty states hide.
 - **Hover** a squawk to see who recorded it.
 - **Restrained cyberpunk** UI — near-black, one cyan accent, edge-glow states.
 

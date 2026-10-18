@@ -15,6 +15,7 @@ const {
   updateSquawk,
   listSquawks,
   migrateSquawkImages,
+  migrateSquawkStates,
 } = await import("../src/server/db.ts");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -168,4 +169,119 @@ test("migrateSquawkImages creates the 1:N table fresh on an empty DB", () => {
   for (const c of ["id", "squawk_id", "position", "mime", "bytes", "byte_size"]) {
     expect(cols).toContain(c);
   }
+});
+
+// --- squawks.state CHECK widening (#137) ----------------------------------------
+
+test("the live schema accepts every state and rejects an unknown one", () => {
+  const list = createList("States");
+  const s = createSquawk(list.id, "verdict", "AA");
+  for (const state of ["confirmed", "rejected", "retired", "recorded", "open"] as const) {
+    expect(updateSquawk(s.id, { state }, "AA").state).toBe(state);
+  }
+  expect(() =>
+    getDb().query("UPDATE squawks SET state = 'maybe' WHERE id = ?").run(s.id),
+  ).toThrow(/CHECK constraint failed/);
+});
+
+/** The `squawks` table exactly as every DB before #137 was created. */
+const LEGACY_SQUAWKS_SQL = `
+  CREATE TABLE lists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    next_seq INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  );
+  CREATE TABLE squawks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','retired','recorded')),
+    initials TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+`;
+
+test("migrateSquawkStates widens a legacy CHECK without losing rows, images or the id high-water mark", () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(LEGACY_SQUAWKS_SQL);
+  migrateSquawkImages(db); // the current squawk_images, FK'd ON DELETE CASCADE to squawks
+  db.exec(`
+    INSERT INTO lists (id, name, next_seq, created_at) VALUES (1, 'L', 5, 't');
+    INSERT INTO squawks (id, list_id, seq, text, state, initials, created_at, updated_at) VALUES
+      (1, 1, 1, 'one', 'open', 'AA', 't1', 'u1'),
+      (2, 1, 2, 'two', 'retired', 'BB', 't2', 'u2'),
+      (3, 1, 3, 'three', 'recorded', 'CC', 't3', 'u3'),
+      (4, 1, 4, 'four', 'open', 'DD', 't4', 'u4');
+    DELETE FROM squawks WHERE id = 4; -- the newest is gone, so the high-water (4) > max(id) (3)
+  `);
+  const bytes = new Uint8Array([9, 8, 7]);
+  db.query(
+    "INSERT INTO squawk_images (squawk_id, position, mime, bytes, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(2, 0, "image/png", bytes, bytes.byteLength, "t");
+  const before = db.query("SELECT * FROM squawks ORDER BY id").all();
+  expect(() =>
+    db.query("UPDATE squawks SET state = 'confirmed' WHERE id = 1").run(),
+  ).toThrow(/CHECK constraint failed/);
+
+  migrateSquawkStates(db);
+
+  // Every row survives byte-for-byte, ids included, and the image was NOT
+  // cascade-deleted by the DROP TABLE inside the rebuild.
+  expect(db.query("SELECT * FROM squawks ORDER BY id").all()).toEqual(before);
+  const img = db
+    .query("SELECT squawk_id, bytes FROM squawk_images")
+    .all() as Array<{ squawk_id: number; bytes: Uint8Array }>;
+  expect(img).toHaveLength(1);
+  expect(img[0]!.squawk_id).toBe(2);
+  expect(new Uint8Array(img[0]!.bytes)).toEqual(bytes);
+
+  // The new states insert; an unknown one is still rejected.
+  db.query("UPDATE squawks SET state = 'confirmed' WHERE id = 1").run();
+  db.query("UPDATE squawks SET state = 'rejected' WHERE id = 3").run();
+  expect(() =>
+    db.query("UPDATE squawks SET state = 'maybe' WHERE id = 1").run(),
+  ).toThrow(/CHECK constraint failed/);
+
+  // A deleted id is never reused: the next insert gets 5, not 4.
+  const next = db
+    .query(
+      "INSERT INTO squawks (list_id, seq, text, initials, created_at, updated_at) VALUES (1, 5, 'five', 'EE', 't', 't') RETURNING id",
+    )
+    .get() as { id: number };
+  expect(next.id).toBe(5);
+
+  // Foreign keys are back on, and still cascade.
+  expect(
+    (db.query("PRAGMA foreign_keys").get() as { foreign_keys: number }).foreign_keys,
+  ).toBe(1);
+  db.query("DELETE FROM squawks WHERE id = 2").run();
+  expect(db.query("SELECT COUNT(*) AS n FROM squawk_images").get()).toEqual({ n: 0 });
+});
+
+test("migrateSquawkStates is a no-op on a current or empty DB", () => {
+  const db = new Database(":memory:");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec(LEGACY_SQUAWKS_SQL);
+  migrateSquawkStates(db);
+  const sql = () =>
+    (
+      db.query("SELECT sql FROM sqlite_master WHERE name = 'squawks'").get() as {
+        sql: string;
+      }
+    ).sql;
+  const migrated = sql();
+  expect(migrated).toContain("'confirmed'");
+  migrateSquawkStates(db); // second run: nothing to do
+  expect(sql()).toBe(migrated);
+
+  // No squawks table yet (a fresh DB before its CREATE): nothing happens.
+  const fresh = new Database(":memory:");
+  migrateSquawkStates(fresh);
+  expect(
+    fresh.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'squawks'").get(),
+  ).toEqual({ n: 0 });
 });

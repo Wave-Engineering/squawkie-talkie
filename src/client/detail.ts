@@ -8,7 +8,7 @@
  * NAV mode keys:
  *   j/↓ — move focus down one row
  *   k/↑ — move focus up one row
- *   ←/→ — cycle squawk state (back/forward: open↔retired↔recorded)
+ *   ←/→ — cycle squawk state (back/forward: open↔confirmed↔rejected↔retired↔recorded)
  *   i/Enter — enter edit mode on focused squawk text
  *   dd — retire focused squawk
  *   yy — record focused squawk + copy text to clipboard
@@ -24,7 +24,11 @@
  *   30s idle autosave with amber warning at 15s
  */
 
-import { MAX_IMAGES_PER_SQUAWK } from "../server/types.ts";
+import {
+  MAX_IMAGES_PER_SQUAWK,
+  SQUAWK_STATES,
+  STATE_GLYPHS,
+} from "../server/types.ts";
 import type { Squawk, SquawkState } from "../server/types.ts";
 import {
   createSquawk,
@@ -49,7 +53,7 @@ import { activeSquawkId, setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
 
 /** The lifecycle states a squawk may be set to, in dropdown order. */
-const STATES: readonly SquawkState[] = ["open", "retired", "recorded"];
+const STATES: readonly SquawkState[] = SQUAWK_STATES;
 
 /** Idle window before an edited squawk autosaves + exits edit mode. */
 const AUTOSAVE_IDLE_MS = 30_000;
@@ -74,7 +78,7 @@ const IMAGE_QUALITY = 0.8;
 //
 // The detail page coaches progressively: the always-empty entry box is coached
 // on first visit even when the list is empty; the squawk-level teachables (the
-// state <select>, the (O│R│E) counts, dd/yy/undo/hover) are only meaningful
+// state <select>, the glyph counts, dd/yy/undo/hover) are only meaningful
 // once a real squawk row exists, so they are shown immediately when the list
 // already has one, or deferred until the user (or a teammate, via SSE) brings
 // the first one into existence. The tour never creates or writes a squawk.
@@ -104,9 +108,10 @@ function coachSquawkSteps(stack: HTMLElement): CoachStep[] {
       target: () => stack.querySelector("[data-squawk-id] .squawk-row__state"),
       placement: "left",
       body:
-        "Open, retired, or recorded. Flip it with `dd`/`yy` from home row. Or " +
-        "reach for the mouse — I'll grab you a juice box and animal crackers " +
-        "while you do. I'll certainly have the time.",
+        "○ open, ✓ confirmed, ✗ rejected, ◌ retired, or ↗ recorded. Walk " +
+        "them with ←/→, or flip straight to retired/recorded with `dd`/`yy` " +
+        "from home row. Or reach for the mouse — I'll grab you a juice box and " +
+        "animal crackers while you do. I'll certainly have the time.",
     },
     {
       target: () => stack.querySelector("[data-squawk-id]"),
@@ -126,8 +131,8 @@ function coachSquawkSteps(stack: HTMLElement): CoachStep[] {
       target: ".detail__counts",
       placement: "bottom",
       body:
-        "Your running tally: Open · Retired · rEcorded — live, as squawks " +
-        "change state.",
+        "Your running tally, one glyph per state (empty ones hide) — live, " +
+        "as squawks change state.",
     },
     {
       target: () => stack.querySelector("[data-squawk-id]"),
@@ -146,16 +151,14 @@ export function stateClass(state: SquawkState): string {
   return `state-${state}`;
 }
 
-/** Per-state tallies for the `(O│R│E)` counts badge. */
-export interface StateCounts {
-  open: number;
-  retired: number;
-  recorded: number;
-}
+/** Per-state tallies for the glyph counts badge (`○3 ✓2 ✗1 ◌4 ↗1`). */
+export type StateCounts = Record<SquawkState, number>;
 
 /** Count squawks by state. */
 export function countByState(squawks: Iterable<Squawk>): StateCounts {
-  const counts: StateCounts = { open: 0, retired: 0, recorded: 0 };
+  const counts = Object.fromEntries(
+    STATES.map((s) => [s, 0]),
+  ) as StateCounts;
   for (const s of squawks) {
     counts[s.state] += 1;
   }
@@ -666,12 +669,12 @@ export async function renderList(
           <tr><th>Key</th><th>Action</th></tr>
           <tr><td><kbd>j</kbd> / <kbd>↓</kbd></td><td>Move down</td></tr>
           <tr><td><kbd>k</kbd> / <kbd>↑</kbd></td><td>Move up</td></tr>
-          <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Cycle state</td></tr>
+          <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Cycle state (○ ✓ ✗ ◌ ↗)</td></tr>
           <tr><td><kbd>i</kbd> / <kbd>Enter</kbd></td><td>Edit mode</td></tr>
           <tr><td><kbd>Esc</kbd></td><td>Exit edit / Jump to entry</td></tr>
           <tr><td><kbd>Home</kbd></td><td>Jump to entry</td></tr>
-          <tr><td><kbd>dd</kbd></td><td>Retire squawk</td></tr>
-          <tr><td><kbd>yy</kbd></td><td>Record + copy</td></tr>
+          <tr><td><kbd>dd</kbd></td><td>Retire squawk (◌)</td></tr>
+          <tr><td><kbd>yy</kbd></td><td>Record + copy (↗)</td></tr>
           <tr><td><kbd>u</kbd></td><td>Undo (within 30s)</td></tr>
           <tr><td><kbd>?</kbd></td><td>This help</td></tr>
         </table>
@@ -1087,7 +1090,7 @@ function buildSquawkRow(
   for (const state of STATES) {
     const option = document.createElement("option");
     option.value = state;
-    option.textContent = state;
+    option.textContent = `${STATE_GLYPHS[state]} ${state}`;
     option.selected = state === squawk.state;
     select.append(option);
   }
@@ -1237,37 +1240,26 @@ function setRecorderText(el: HTMLElement, initials: string): void {
   el.setAttribute("aria-label", `recorded by ${initials}`);
 }
 
+/**
+ * Render the counts as glyph tallies in state order — `○3 ✓2 ✗1 ◌4 ↗1` — omitting
+ * every state with a zero count, so the glyph says what each number counts (#137).
+ */
 function renderCounts(el: HTMLElement, counts: StateCounts): void {
-  el.replaceChildren();
-  el.append(
-    document.createTextNode("("),
-    countSpan(counts.open, "open"),
-    countSep(),
-    countSpan(counts.retired, "retired"),
-    countSep(),
-    countSpan(counts.recorded, "recorded"),
-    document.createTextNode(")"),
+  el.replaceChildren(
+    ...STATES.filter((s) => counts[s] > 0).map((s) => countSpan(counts[s], s)),
   );
 }
 
 function countSpan(n: number, state: SquawkState): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = `count count--${state}`;
-  span.textContent = String(n);
+  span.textContent = `${STATE_GLYPHS[state]}${n}`;
   span.title = `${state}: ${n}`;
   return span;
 }
 
-function countSep(): HTMLSpanElement {
-  const sep = document.createElement("span");
-  sep.className = "count__sep";
-  sep.textContent = "│";
-  sep.setAttribute("aria-hidden", "true");
-  return sep;
-}
-
 function applyState(row: HTMLElement, state: SquawkState): void {
-  row.classList.remove("state-open", "state-retired", "state-recorded");
+  row.classList.remove(...STATES.map(stateClass));
   row.classList.add(stateClass(state));
 }
 

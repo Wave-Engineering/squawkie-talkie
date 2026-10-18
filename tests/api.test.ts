@@ -155,6 +155,47 @@ test("PATCH squawk updates state", async () => {
   expect(updated.initials).toBe("ZZ");
 });
 
+test("PATCH round-trips every state, and the list (what Export saves) carries it as-is (#137)", async () => {
+  const list = await createList("Verdicts");
+  const states = ["open", "confirmed", "rejected", "retired", "recorded"];
+  const ids: number[] = [];
+  for (const state of states) {
+    const sq = await (
+      await routeRequest(
+        req("POST", `/api/lists/${list.id}/squawks`, { text: state, initials: "AA" }),
+      )
+    ).json();
+    const res = await routeRequest(
+      req("PATCH", `/api/squawks/${sq.id}`, { state, initials: "AA" }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).state).toBe(state);
+    ids.push(sq.id);
+  }
+  // The list-detail payload is what the client's Export button writes to disk.
+  const detail = await (await routeRequest(req("GET", `/api/lists/${list.id}`))).json();
+  const byId = new Map(
+    detail.squawks.map((s: { id: number; state: string }) => [s.id, s.state]),
+  );
+  expect(ids.map((id) => byId.get(id))).toEqual(states);
+});
+
+test("PATCH with an unknown state is rejected 400 and leaves the squawk alone", async () => {
+  const list = await createList("BadState");
+  const sq = await (
+    await routeRequest(
+      req("POST", `/api/lists/${list.id}/squawks`, { text: "x", initials: "AA" }),
+    )
+  ).json();
+  const res = await routeRequest(
+    req("PATCH", `/api/squawks/${sq.id}`, { state: "maybe", initials: "AA" }),
+  );
+  expect(res.status).toBe(400);
+  expect((await res.json()).error).toBe("invalid state");
+  const detail = await (await routeRequest(req("GET", `/api/lists/${list.id}`))).json();
+  expect(detail.squawks[0].state).toBe("open");
+});
+
 test("PATCH with no text or state is rejected (no silent updated_at bump)", async () => {
   const list = await createList("NoOp");
   const sq = await (

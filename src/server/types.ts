@@ -6,8 +6,36 @@
  * a lifecycle `state`, and the initials of the operator who logged it.
  */
 
+/**
+ * Every lifecycle state a squawk may hold, in dropdown and `←/→` cycle order. The
+ * single source of truth: the `squawks.state` CHECK constraint, the API's
+ * validation, the client's dropdown and the counts are all built from it (#137).
+ */
+export const SQUAWK_STATES = [
+  "open",
+  "confirmed",
+  "rejected",
+  "retired",
+  "recorded",
+] as const;
+
 /** Lifecycle state of a squawk. Matches the CHECK constraint on `squawks.state`. */
-export type SquawkState = "open" | "retired" | "recorded";
+export type SquawkState = (typeof SQUAWK_STATES)[number];
+
+/**
+ * The glyph each state shows everywhere it appears (dropdown, row, counts, CLI).
+ * Monochrome Unicode, not emoji, so it takes the text color; the glyph carries the
+ * meaning and color only reinforces it. `○` → `◌` is deliberate: retired reads as
+ * the open item faded out, not as a verdict. The `sqtk` CLI keeps its own copy of
+ * this map (it is bash); `tests/cli.test.ts` holds the two in step.
+ */
+export const STATE_GLYPHS: Readonly<Record<SquawkState, string>> = {
+  open: "○",
+  confirmed: "✓",
+  rejected: "✗",
+  retired: "◌",
+  recorded: "↗",
+};
 
 /**
  * Maximum images attachable to a single squawk. Shared by the server (cap

@@ -15,15 +15,12 @@ test.describe("Vi-mode: state cycling with arrows", () => {
     await expect(select).toHaveValue("open");
     await expect(row).toHaveClass(/state-open/);
 
-    // Right → retired
-    await page.keyboard.press("ArrowRight");
-    await expect(select).toHaveValue("retired");
-    await expect(row).toHaveClass(/state-retired/);
-
-    // Right → recorded
-    await page.keyboard.press("ArrowRight");
-    await expect(select).toHaveValue("recorded");
-    await expect(row).toHaveClass(/state-recorded/);
+    // Right walks all five in order (#137): confirmed → rejected → retired → recorded
+    for (const state of ["confirmed", "rejected", "retired", "recorded"]) {
+      await page.keyboard.press("ArrowRight");
+      await expect(select).toHaveValue(state);
+      await expect(row).toHaveClass(new RegExp(`state-${state}`));
+    }
 
     // Right wraps → open
     await page.keyboard.press("ArrowRight");
