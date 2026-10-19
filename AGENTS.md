@@ -19,15 +19,25 @@ the JSON API, so you never hand-roll HTTP. Point it at an instance with `SQUAWK_
 **required, with no default**: unset, `sqtk` fails loud rather than silently talking to some
 `localhost` instance nobody is watching (per-process SSE makes a misrouted write a split-brain
 trap). Use `http://localhost:7700` for local dev, or your deployed URL. Initials auto-fill
-from `./.claude/agent-identity.json` (override with `SQUAWK_INITIALS`).
+from `./.claude/agent-identity.json`, or the git toplevel's (override with `SQUAWK_INITIALS`).
 
 ```bash
 sqtk add    "wave-engine" "ENG-1 corrupts state on blocked exit"   # log (creates the list if new)
 sqtk show   "wave-engine"                                          # list + squawks + glyph counts
 sqtk set    "wave-engine" 3 --state recorded                       # retire/record/reopen by #seq
 sqtk set    "wave-engine" 4 --state confirmed                      # a yes/no verdict: confirmed|rejected
+sqtk attach "wave-engine" 3 shot.png                               # up to 5 jpeg/png/webp images, ≤2 MB each
+sqtk walk   "wave-engine"                                          # open squawks, oldest first, "#seq  <text>"
+sqtk mine                                                          # what this checkout added, with current states
 sqtk lists                                                         # all lists  ·  sqtk help
 ```
+
+`add` prefixes the text `[<dev-name>·<repo>] ` so a shared list says who wrote each line and
+from where (`--no-prefix` skips it), refuses an open duplicate with exit 3 (`--force` adds it
+anyway), and records the squawk in `.claude/sqtk-mine.json` at the git toplevel, kept out of
+commits through the clone's `info/exclude`. That file's shape is a contract the kit's drain hook
+reads; it is documented in `sqtk`'s header. `set --text` refuses to drop a trailing `→ …`
+answer unless `--force`.
 
 Squawks are referenced by their per-list `#seq` (what `show`/`add` print) and **change state
 rather than being deleted** (`set --state retired`) — the one true-delete is the editor's `u`
