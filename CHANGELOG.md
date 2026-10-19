@@ -7,15 +7,22 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-19 — sqtk for agents
+
 ### Added
 - **`sqtk` for shared need and triage lists** (#141):
-  - `add` prefixes `[<dev-name>·<repo>] `, refuses an open duplicate (exit 3, `--force`), and
-    records each squawk in `.claude/sqtk-mine.json`. Its shape is a contract the kit consumes,
-    and it is kept out of commits through `info/exclude`.
+  - `add` records each squawk in `.claude/sqtk-mine.json`. Its shape is a contract the kit
+    consumes, and it is kept out of commits through `info/exclude`.
   - `attach <list> <seq> <file>…` uploads jpeg/png/webp images, typed by magic bytes, at most
     2 MB each and 5 per squawk.
   - `mine` shows this checkout's squawks with their current state.
   - `walk <list>` prints the open squawks oldest first.
+
+### Changed
+- **`sqtk add` and `set` guard the shared lists** (#141):
+  - `add` prefixes `[<dev-name>·<repo>] ` (`--no-prefix` opts out) and refuses an open
+    duplicate with **exit 3** (`--force` overrides). A script that calls `add` must expect
+    that exit.
   - `set --text` refuses to drop a trailing `→ …` answer unless `--force`.
 
 ## [0.8.0] — 2026-10-18 — Verdict states & signed images
