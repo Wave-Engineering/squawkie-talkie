@@ -62,6 +62,12 @@ export function readLastSeen(): Record<string, string> | null {
  * Record that this browser has seen `listId` as of `iso`. It never moves the value
  * back, so an older timestamp arriving late can't re-badge a list. A failure to
  * write is silent: no storage means no badges, not errors.
+ *
+ * The item page also marks the reader's own edits seen, from the PATCH response.
+ * That response doesn't ride the event stream, so if the stream had dropped, an
+ * earlier change by someone else could be marked seen without being shown. It
+ * needs a dropped stream and leaving before the reconnect's resync; the tight
+ * fix would need the server to send the previous timestamp, so we accept it.
  */
 export function markSeen(listId: number, iso: string): void {
   try {

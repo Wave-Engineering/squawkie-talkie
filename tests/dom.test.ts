@@ -898,6 +898,53 @@ test("a squawk event on the lists page refreshes counts, strike and badge in pla
   expect(row.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(false);
 });
 
+test("a failed stats refresh lets an older one paint; a late older one never overwrites", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  stubLists([mkListRow(1, "Regression", { open: 1 })]);
+  const container = document.createElement("div");
+  document.body.append(container);
+  renderLists(container);
+  await settle();
+  const text = () => container.querySelector(".list-row__counts")!.textContent;
+
+  // Every refresh now waits until the test answers it.
+  const pending: Array<{ resolve: (r: Response) => void; reject: (e: Error) => void }> = [];
+  globalThis.fetch = (() =>
+    new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))) as unknown as typeof fetch;
+  const event = () =>
+    applyEvent(
+      { type: "squawk.created", squawk: { ...mkSquawk(12, 3), list_id: 1 } },
+      { view: activeView(), activeElement: null },
+    );
+  const reply = (open: number) =>
+    new Response(JSON.stringify([mkListRow(1, "Regression", { open })]), {
+      headers: { "content-type": "application/json" },
+    });
+
+  event();
+  await settle(200);
+  event();
+  await settle(200);
+  expect(pending).toHaveLength(2);
+  pending[1]!.reject(new Error("network"));
+  await settle();
+  pending[0]!.resolve(reply(2));
+  await settle();
+  expect(text()).toBe("○2");
+
+  event();
+  await settle(200);
+  event();
+  await settle(200);
+  expect(pending).toHaveLength(4);
+  pending[3]!.resolve(reply(4));
+  await settle();
+  pending[2]!.resolve(reply(3));
+  await settle();
+  expect(text()).toBe("○4");
+});
+
 // --- Onboarding coach tour (Epic #69, #72): seen-flag gate ------------------
 
 /** Stub fetch so `GET /api/lists` returns the given rows (default: one list). */

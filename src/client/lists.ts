@@ -377,16 +377,24 @@ export function renderLists(container: HTMLElement): void {
     } catch {
       return; // keep what is shown; the indicator signals a lost connection
     }
-    if (gen !== statsGen) return; // a newer fetch has painted, or will
+    if (!claimPaint(gen)) return; // a newer response has already painted
     for (const l of fresh) {
       const i = model.findIndex((m) => m.id === l.id);
       if (i >= 0) model[i] = l;
       statsPainters.get(l.id)?.(l);
     }
   }
-  // A burst of squawk events costs one fetch, and only the latest fetch paints:
-  // the debounce spaces the requests, but responses can still arrive out of order.
+  // A burst of squawk events costs one fetch, and a response older than one
+  // already painted is dropped: the debounce spaces the requests, but responses
+  // can still arrive out of order. A failed fetch claims nothing, so an older
+  // response still in flight paints in its place.
   let statsGen = 0;
+  let paintedGen = 0;
+  function claimPaint(gen: number): boolean {
+    if (gen <= paintedGen) return false;
+    paintedGen = gen;
+    return true;
+  }
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleRefresh(): void {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
@@ -715,10 +723,11 @@ export function renderLists(container: HTMLElement): void {
       }
       const freshIds = new Set(fresh.map((l) => l.id));
       // Add lists created while offline (addList de-dupes anything already shown),
-      // and repaint the stats of the ones already shown, unless a newer fetch has.
+      // and repaint the stats of the ones already shown, unless a newer response has.
+      const paint = claimPaint(gen);
       for (const l of fresh) {
         addList(l);
-        if (gen === statsGen) statsPainters.get(l.id)?.(l);
+        if (paint) statsPainters.get(l.id)?.(l);
       }
       // Remove lists deleted while offline.
       for (const l of [...model]) {
