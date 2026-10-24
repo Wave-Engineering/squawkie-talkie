@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-24 — list counts & wrapping squawks
+
 ### Added
 - **The lists page says what is in each list** (#145). It used to show only names, so a reader
   had to open a list to learn whether anything in it was still open. Now each row shows:
