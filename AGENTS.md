@@ -32,6 +32,19 @@ sqtk mine                                                          # what this c
 sqtk lists                                                         # all lists  ·  sqtk help
 ```
 
+**Two list names are reserved** (#147), so agents name the standard lists the same way:
+`triage` is this repo's `<repo>:triage` (the same `<repo>` as `add`'s prefix: the main
+checkout's folder, also from a linked worktree) and `needs` is the shared `bj:needs`. They
+resolve for `add`, `show`, `walk`, `set` and `attach`; `add` says on stderr what it resolved
+to. Every other name means itself, two repos with the same name share a triage list, and
+`new`/`rmlist` take names literally, so `rmlist needs` can never reach `bj:needs`.
+
+```bash
+sqtk add  triage "the gate ignores the lock list"    # → <repo>:triage
+sqtk add  needs  "Cut v1.0? Recommend yes →"          # → bj:needs
+sqtk walk triage
+```
+
 `add` prefixes the text `[<dev-name>·<repo>] ` so a shared list says who wrote each line and
 from where (`--no-prefix` skips it), refuses an open duplicate with exit 3 (`--force` adds it
 anyway), and records the squawk in `.claude/sqtk-mine.json` at the git toplevel, kept out of

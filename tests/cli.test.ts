@@ -372,6 +372,83 @@ test("in a linked worktree (how fleet agents run) the entry goes to the shared i
   expect(excludeLines(main)).toHaveLength(1); // --git-path answers absolute here: the common dir's
 });
 
+// --- #147: reserved list names -------------------------------------------------
+
+test("triage resolves to <repo>:triage for every list command, and add says so", async () => {
+  const add = sqtk("add", "triage", "a triage item");
+  expect(add.code).toBe(0);
+  expect(sqtkLines(add.err)).toEqual(['sqtk: "triage" resolved to "sqtk-fixture:triage"']);
+  expect((await listByName("sqtk-fixture:triage")).squawks.map((s) => s.text)).toContain(`${P}a triage item`);
+  expect(mineOf().at(-1)?.list).toBe("sqtk-fixture:triage");
+
+  const show = sqtk("show", "triage");
+  expect(show.code).toBe(0);
+  expect(show.out).toContain("sqtk-fixture:triage");
+  expect(sqtkLines(show.err)).toEqual([]); // only add reports a resolution inside git
+  expect(sqtk("walk", "triage").out).toContain(`${P}a triage item`);
+  const seq = String((await listByName("sqtk-fixture:triage")).squawks.at(-1)?.seq);
+  expect(sqtk("set", "triage", seq, "--state", "retired").code).toBe(0);
+  expect((await squawk("sqtk-fixture:triage", Number(seq))).state).toBe("retired");
+  expect(sqtk("attach", "triage", seq, img("tiny.png")).code).toBe(0);
+});
+
+test("needs resolves to bj:needs", async () => {
+  const add = sqtk("add", "needs", "a need →");
+  expect(add.code).toBe(0);
+  expect(sqtkLines(add.err)).toEqual(['sqtk: "needs" resolved to "bj:needs"']);
+  expect((await listByName("bj:needs")).squawks.map((s) => s.text)).toContain(`${P}a need →`);
+  expect(sqtk("walk", "needs").out).toContain(`${P}a need →`);
+});
+
+test("from a linked worktree, triage names the main checkout's repo", async () => {
+  const main = join(TMP, "widget");
+  const wt = join(TMP, "widget-wt-7");
+  gitInit(main);
+  expect(git(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x").exitCode).toBe(0);
+  expect(git(main, "worktree", "add", "-q", wt).exitCode).toBe(0);
+  const r = run(["add", "triage", "from the worktree"], { cwd: wt });
+  expect(r.code).toBe(0);
+  expect(sqtkLines(r.err)).toEqual(['sqtk: "triage" resolved to "widget:triage"']);
+  expect((await listByName("widget:triage")).squawks).toHaveLength(1);
+});
+
+test("outside a git checkout, triage falls back to the cwd's name and every command says so", () => {
+  // Its own non-git dir: PLAIN's record of mine is asserted exactly elsewhere.
+  const dir = join(TMP, "loose-dir");
+  mkdirSync(dir);
+  const add = run(["add", "triage", "from nowhere"], { cwd: dir });
+  expect(add.code).toBe(0);
+  const note = 'sqtk: "triage" resolved to "loose-dir:triage" (not in a git checkout)';
+  expect(sqtkLines(add.err)).toEqual([note]);
+  const walk = run(["walk", "triage"], { cwd: dir });
+  expect(walk.code).toBe(0);
+  expect(sqtkLines(walk.err)).toEqual([note]);
+});
+
+test("other names pass through unchanged; new and rmlist take reserved names literally", async () => {
+  const other = sqtk("add", "other:triage", "qualified");
+  expect(other.code).toBe(0);
+  expect(sqtkLines(other.err)).toEqual([]);
+  expect((await listByName("other:triage")).squawks).toHaveLength(1);
+  expect(sqtk("add", "triage-ish", "near miss").code).toBe(0);
+  expect((await listByName("triage-ish")).squawks).toHaveLength(1);
+
+  // rmlist needs must never reach bj:needs: with no list literally named "needs", it fails.
+  const before = (await listByName("bj:needs")).squawks.length;
+  expect(sqtk("rmlist", "needs", "--yes").code).not.toBe(0);
+  expect((await listByName("bj:needs")).squawks).toHaveLength(before);
+  const made = sqtk("new", "triage");
+  expect(made.code).toBe(0);
+  expect(made.out).toContain("created list #");
+  expect((await listByName("triage")).squawks).toHaveLength(0);
+});
+
+test("help documents the reserved names", () => {
+  const usage = sqtk("help").err;
+  expect(usage).toContain('"triage"');
+  expect(usage).toContain('"bj:needs"');
+});
+
 test("parallel adds in one checkout (an agent's parallel tool calls) lose no record", async () => {
   const dir = join(TMP, "parallel-fixture");
   gitInit(dir);

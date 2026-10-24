@@ -7,6 +7,12 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **Reserved list names in `sqtk`** (#147): `triage` resolves to this repo's `<repo>:triage`
+  (the same `<repo>` as `add`'s prefix) and `needs` to `bj:needs`, for `add`, `show`, `walk`,
+  `set` and `attach`. `add` reports the resolution on stderr, and so does any command that
+  resolves `triage` outside a git checkout. `new` and `rmlist` take names literally.
+
 ## [0.9.0] — 2026-10-19 — sqtk for agents
 
 ### Added
