@@ -852,7 +852,9 @@ export async function renderList(
   stack.addEventListener("focusout", (event) => {
     if (mode !== "edit" || focusedSquawkId === null) return;
     const handle = rowHandles.get(focusedSquawkId);
-    if (!handle || event.target !== handle.input) return;
+    // From anywhere in the row: the select or a button may hold the focus by now.
+    const from = event.target;
+    if (!handle || !(from instanceof Node) || !handle.el.contains(from)) return;
     const next = event.relatedTarget;
     if (next instanceof Node && handle.el.contains(next)) return;
     if (document.hasFocus?.() === false) return;

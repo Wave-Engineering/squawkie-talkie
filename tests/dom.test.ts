@@ -677,11 +677,9 @@ test("focus leaving the edited row ends the edit and its nav focus", async () =>
   input11.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
   expect(row11.classList.contains("squawk-row--editing")).toBe(true);
 
-  // Within the row (the state select): still editing.
+  // Within the row (the state select): still editing. Then out, from the select.
   row11.querySelector<HTMLSelectElement>("select")!.focus();
   expect(row11.classList.contains("squawk-row--editing")).toBe(true);
-
-  input11.focus();
   newInput.focus();
   expect(row11.classList.contains("squawk-row--editing")).toBe(false);
   expect(row11.classList.contains("squawk-row--nav-focus")).toBe(false);
