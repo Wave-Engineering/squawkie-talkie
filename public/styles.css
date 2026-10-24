@@ -376,6 +376,14 @@ body {
   line-height: 1.4;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+
+/* The clamp, on an unpadded box inside the display: a clamped box clips at its
+   padding edge, so padding of its own would show the top of the fourth line. */
+.squawk-row__clamp {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
@@ -384,11 +392,17 @@ body {
 }
 
 /* Expanded by a click, or focused in nav mode: all of it. */
-.squawk-row--expanded .squawk-row__display,
-.squawk-row--nav-focus .squawk-row__display {
+.squawk-row--expanded .squawk-row__clamp,
+.squawk-row--nav-focus .squawk-row__clamp {
   display: block;
   -webkit-line-clamp: unset;
   line-clamp: none;
+}
+
+/* The focused field is invisible while idle, so its focus look moves here. */
+.squawk-row__body:focus-within .squawk-row__display {
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
 }
 
 .squawk-row__body .squawk-row__text {
@@ -406,7 +420,7 @@ body {
 }
 
 /* An empty squawk keeps a line's height, so its row still takes a click. */
-.squawk-row__display:empty::before {
+.squawk-row__clamp:empty::before {
   content: "\200b";
 }
 
@@ -433,6 +447,26 @@ body {
   position: static;
   opacity: 1;
   cursor: text;
+}
+
+/* A phone (#146): beside the seq, state and image the text column is about one
+   word wide, so the text takes a full-width line of its own under them. */
+@media (max-width: 40rem) {
+  .squawk-row__seq,
+  .squawk-row__state,
+  .squawk-row__image {
+    grid-row: 1;
+  }
+  .squawk-row__state {
+    grid-column: 3;
+  }
+  .squawk-row__image {
+    grid-column: 4;
+  }
+  .squawk-row__body {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
 }
 
 /* Focused input — the clearly-active editing state: raised surface + accent

@@ -628,6 +628,42 @@ test("a click toggles the row's expansion, and does nothing while editing", asyn
   expect(row11.classList.contains("squawk-row--expanded")).toBe(false);
 });
 
+test("a click on the nav-focused row leaves it unexpanded", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(".squawk-row--new .squawk-row__text")!;
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  expect(row10.classList.contains("squawk-row--nav-focus")).toBe(true);
+  row10.querySelector<HTMLInputElement>("input")!.click();
+  expect(row10.classList.contains("squawk-row--expanded")).toBe(false);
+});
+
+test("a double-click edits the row, moving nav focus off another", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(".squawk-row--new .squawk-row__text")!;
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const row11 = container.querySelector<HTMLElement>('[data-squawk-id="11"]')!;
+  const input11 = row11.querySelector<HTMLInputElement>("input")!;
+  expect(row10.classList.contains("squawk-row--nav-focus")).toBe(true);
+
+  input11.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  expect(row11.classList.contains("squawk-row--editing")).toBe(true);
+  expect(row10.classList.contains("squawk-row--nav-focus")).toBe(false);
+  expect(input11.inputMode).toBe("text");
+  expect(document.activeElement).toBe(input11);
+});
+
 test("a remote text update refreshes an unfocused row's display block", async () => {
   const { renderList } = await import("../src/client/detail.ts");
   const { applyEvent, activeView } = await import("../src/client/realtime.ts");

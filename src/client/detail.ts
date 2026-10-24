@@ -232,21 +232,20 @@ export function onEnter(input: EnterInput): EnterDecision {
 }
 
 /**
- * Whether text of content height `scrollHeight` (which includes `paddingY`) runs
- * past `lines` lines of `lineHeight` px, so a clamped row hides some of it (#146).
- * It compares against the clamp, not the box, so the answer holds while a row is
- * expanded too. Pure, so it's unit-tested; an unreadable line height (NaN, 0)
- * reads as no overflow, so the cue never shows on a guess.
+ * Whether text of content height `scrollHeight` (the unpadded clamp element's)
+ * runs past `lines` lines of `lineHeight` px, so a clamped row hides some of it
+ * (#146). It compares against the clamp, not the box, so the answer holds while a
+ * row is expanded too. Pure, so it's unit-tested; an unreadable line height (NaN,
+ * 0) reads as no overflow, so the cue never shows on a guess.
  */
 export function overflowsClamp(
   scrollHeight: number,
   lineHeight: number,
-  paddingY: number,
   lines: number = CLAMP_LINES,
 ): boolean {
   if (!(lineHeight > 0)) return false;
   // A pixel of slack absorbs sub-pixel rounding of a text that fits exactly.
-  return scrollHeight - paddingY > lineHeight * lines + 1;
+  return scrollHeight > lineHeight * lines + 1;
 }
 
 /**
@@ -410,6 +409,16 @@ export async function renderList(
     resetEditTimer(squawkId);
     stack.classList.add("detail__stack--has-edit");
     updateModeBar();
+  }
+
+  /** A double-click, or a double-tap on a phone with no `i` or Enter, edits (#146). */
+  function editByPointer(squawkId: number): void {
+    if (mode === "edit") exitEditMode(true);
+    setNavFocus(squawkId);
+    // Focus again inside the gesture: a phone raises its keyboard on focus, not
+    // when an already-focused field's inputMode changes.
+    rowHandles.get(squawkId)?.input.blur();
+    enterEditMode(squawkId);
   }
 
   function exitEditMode(save = true): void {
@@ -749,6 +758,7 @@ export async function renderList(
       model,
       updateCounts,
       pickImage,
+      editByPointer,
     );
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
@@ -846,6 +856,7 @@ export async function renderList(
       model,
       updateCounts,
       pickImage,
+      editByPointer,
     );
     rowHandles.set(squawk.id, handle);
     stack.append(handle.el);
@@ -1078,6 +1089,7 @@ function buildSquawkRow(
   model: Map<number, Squawk>,
   onChange: () => void,
   onPickImage: (squawkId: number) => void,
+  onEdit: (squawkId: number) => void,
 ): RowHandle {
   const row = document.createElement("div");
   row.className = `squawk-row ${stateClass(squawk.state)}`;
@@ -1107,6 +1119,11 @@ function buildSquawkRow(
   const display = document.createElement("div");
   display.className = "squawk-row__display";
   display.setAttribute("aria-hidden", "true");
+  // The clamp sits inside the padded block, not on it: a clamped box clips at its
+  // padding edge, so a padded one shows the top of the next line in its padding.
+  const clamp = document.createElement("div");
+  clamp.className = "squawk-row__clamp";
+  display.append(clamp);
   const more = document.createElement("span");
   more.className = "squawk-row__more mono";
   more.setAttribute("aria-hidden", "true");
@@ -1115,26 +1132,33 @@ function buildSquawkRow(
 
   /** Flag the row when its text runs past the clamp, which shows the cue. */
   function measure(): void {
-    const style = getComputedStyle(display);
-    const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
     row.classList.toggle(
       "squawk-row--clamped",
-      overflowsClamp(display.scrollHeight, parseFloat(style.lineHeight), paddingY || 0),
+      overflowsClamp(clamp.scrollHeight, parseFloat(getComputedStyle(clamp).lineHeight)),
     );
   }
   function showText(text: string): void {
-    display.textContent = text;
+    clamp.textContent = text;
     measure();
   }
   // Width changes (a resize, the first layout) change where the text wraps.
   const resizeObserver =
     typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measure());
-  resizeObserver?.observe(display);
+  resizeObserver?.observe(clamp);
+  // A web font that loads late can re-wrap the text without resizing the box.
+  document.fonts?.ready.then(measure);
   showText(squawk.text);
 
   input.addEventListener("click", () => {
+    // A nav-focused row already shows all of it, so a toggle there would only
+    // leave the row stuck open once focus moved on.
     if (row.classList.contains("squawk-row--editing")) return;
+    if (row.classList.contains("squawk-row--nav-focus")) return;
     row.classList.toggle("squawk-row--expanded");
+  });
+  // A double-click edits. Its two clicks toggle the row open and shut again.
+  input.addEventListener("dblclick", () => {
+    if (!row.classList.contains("squawk-row--editing")) onEdit(squawk.id);
   });
 
   let lastSaved = squawk.text;

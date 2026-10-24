@@ -178,26 +178,26 @@ test("fitWithin never upscales a small image", () => {
 // --- overflowsClamp (#146) -----------------------------------------------------
 
 test("overflowsClamp: text within the clamp shows no cue", () => {
-  // 3 lines of 20px, plus 16px of padding.
-  expect(overflowsClamp(76, 20, 16)).toBe(false);
-  expect(overflowsClamp(36, 20, 16)).toBe(false); // one line
+  // 3 lines of 20px.
+  expect(overflowsClamp(60, 20)).toBe(false);
+  expect(overflowsClamp(20, 20)).toBe(false); // one line
 });
 
 test("overflowsClamp: a fourth line is hidden text", () => {
-  expect(overflowsClamp(96, 20, 16)).toBe(true);
+  expect(overflowsClamp(80, 20)).toBe(true);
 });
 
 test("overflowsClamp: a sub-pixel overshoot of an exact fit is not overflow", () => {
-  expect(overflowsClamp(76.6, 20, 16)).toBe(false);
+  expect(overflowsClamp(60.6, 20)).toBe(false);
 });
 
 test("overflowsClamp: an unreadable line height never shows the cue", () => {
-  expect(overflowsClamp(500, Number.NaN, 16)).toBe(false);
-  expect(overflowsClamp(500, 0, 16)).toBe(false);
+  expect(overflowsClamp(500, Number.NaN)).toBe(false);
+  expect(overflowsClamp(500, 0)).toBe(false);
 });
 
 test("overflowsClamp defaults to CLAMP_LINES", () => {
   expect(CLAMP_LINES).toBe(3);
-  expect(overflowsClamp(20 * 4, 20, 0, 4)).toBe(false);
-  expect(overflowsClamp(20 * 4, 20, 0)).toBe(true);
+  expect(overflowsClamp(20 * 4, 20, 4)).toBe(false);
+  expect(overflowsClamp(20 * 4, 20)).toBe(true);
 });

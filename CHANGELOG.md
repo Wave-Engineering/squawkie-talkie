@@ -14,8 +14,10 @@ at `v0.3.0`**.
   - The text wraps, clamped to 3 lines, with a `…more` cue only when some is hidden.
   - A click or tap shows all of it in place, and a second one clamps it again.
   - The row focused in nav mode shows all of it.
-  - Editing is unchanged: the field returns in edit mode. On a phone, a tap on an idle row
-    raises no keyboard.
+  - A double-click (a double-tap on a phone) edits the row, as `i` and `Enter` already did;
+    the field returns in edit mode. A single tap raises no keyboard.
+  - On a phone the text takes a full-width line under the seq, state and image, which
+    otherwise leave it about a word wide.
 
 ## [0.10.0] — 2026-10-24 — reserved list names
 
