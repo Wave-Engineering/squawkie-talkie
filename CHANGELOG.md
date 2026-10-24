@@ -7,6 +7,19 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Changed
+- **A squawk's text wraps, and a tap expands it** (#146). An idle row used to show its text
+  in a one-line field, so a squawk longer than the row was cut off with no way to read the
+  rest. Now:
+  - The text wraps, clamped to 3 lines, with a `…more` cue only when some is hidden.
+  - A click or tap shows all of it in place, and a second one clamps it again.
+  - The row focused in nav mode shows all of it.
+  - A double-click (a double-tap on a phone) edits the row, as `i` and `Enter` already did;
+    the field returns in edit mode. A single tap raises no keyboard. Focus leaving the row,
+    such as a tap elsewhere, saves and ends the edit, since a phone has no `Esc`.
+  - On a phone the text takes a full-width line under the seq, state and image, which
+    otherwise leave it about a word wide.
+
 ## [0.10.0] — 2026-10-24 — reserved list names
 
 ### Added

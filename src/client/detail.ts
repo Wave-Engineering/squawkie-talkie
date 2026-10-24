@@ -67,6 +67,9 @@ const SETTLE_IN_MS = 30_000;
 /** Chord timeout: how long to wait for the second key in dd/yy. */
 const CHORD_TIMEOUT_MS = 500;
 
+/** Lines an idle squawk's text shows before it is clamped (#146). Matches styles.css. */
+export const CLAMP_LINES = 3;
+
 /** Longest edge (px) a picked image is scaled down to before upload. */
 const IMAGE_MAX_EDGE = 1600;
 
@@ -229,6 +232,23 @@ export function onEnter(input: EnterInput): EnterDecision {
 }
 
 /**
+ * Whether text of content height `scrollHeight` (the unpadded clamp element's)
+ * runs past `lines` lines of `lineHeight` px, so a clamped row hides some of it
+ * (#146). It compares against the clamp, not the box, so the answer holds while a
+ * row is expanded too. Pure, so it's unit-tested; an unreadable line height (NaN,
+ * 0) reads as no overflow, so the cue never shows on a guess.
+ */
+export function overflowsClamp(
+  scrollHeight: number,
+  lineHeight: number,
+  lines: number = CLAMP_LINES,
+): boolean {
+  if (!(lineHeight > 0)) return false;
+  // A pixel of slack absorbs sub-pixel rounding of a text that fits exactly.
+  return scrollHeight > lineHeight * lines + 1;
+}
+
+/**
  * Target dimensions to fit `(w, h)` inside a `maxEdge`×`maxEdge` box while
  * preserving aspect ratio. Never upscales — a source already within the box is
  * returned unchanged. Pure (no DOM), so it's unit-tested; the canvas re-encode
@@ -382,12 +402,23 @@ export async function renderList(
     handle.el.classList.add("squawk-row--editing");
     handle.el.classList.remove("squawk-row--nav-focus");
     handle.input.dataset.viMode = "edit";
+    handle.input.inputMode = "text";
     handle.input.focus();
     const end = handle.input.value.length;
     handle.input.setSelectionRange(end, end);
     resetEditTimer(squawkId);
     stack.classList.add("detail__stack--has-edit");
     updateModeBar();
+  }
+
+  /** A double-click, or a double-tap on a phone with no `i` or Enter, edits (#146). */
+  function editByPointer(squawkId: number): void {
+    if (mode === "edit") exitEditMode(true);
+    setNavFocus(squawkId);
+    // Focus again inside the gesture: a phone raises its keyboard on focus, not
+    // when an already-focused field's inputMode changes.
+    rowHandles.get(squawkId)?.input.blur();
+    enterEditMode(squawkId);
   }
 
   function exitEditMode(save = true): void {
@@ -406,6 +437,7 @@ export async function renderList(
     stack.classList.remove("detail__stack--has-edit");
     if (handle) {
       handle.input.dataset.viMode = "nav";
+      handle.input.inputMode = "none";
       handle.el.classList.add("squawk-row--nav-focus");
     }
     updateModeBar();
@@ -644,6 +676,7 @@ export async function renderList(
   function removeSquawkRow(squawkId: number): void {
     const handle = rowHandles.get(squawkId);
     if (handle) {
+      handle.dispose();
       handle.el.remove();
       rowHandles.delete(squawkId);
     }
@@ -725,6 +758,7 @@ export async function renderList(
       model,
       updateCounts,
       pickImage,
+      editByPointer,
     );
     rowHandles.set(squawk.id, handle);
     newRow.el.insertAdjacentElement("afterend", handle.el);
@@ -812,6 +846,24 @@ export async function renderList(
     }
   }, true);
 
+  // Focus leaving the row being edited (a tap or a click elsewhere) ends the edit
+  // and its nav focus: a phone has no Esc or arrow keys to end it (#146). Focus
+  // moving within the row, or the window losing focus, leaves the edit alone.
+  stack.addEventListener("focusout", (event) => {
+    if (mode !== "edit" || focusedSquawkId === null) return;
+    const handle = rowHandles.get(focusedSquawkId);
+    // From anywhere in the row: the select or a button may hold the focus by now.
+    const from = event.target;
+    if (!handle || !(from instanceof Node) || !handle.el.contains(from)) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && handle.el.contains(next)) return;
+    if (document.hasFocus?.() === false) return;
+    exitEditMode(true);
+    handle.el.classList.remove("squawk-row--nav-focus");
+    focusedSquawkId = null;
+    updateModeBar();
+  });
+
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
     model.set(squawk.id, squawk);
@@ -822,6 +874,7 @@ export async function renderList(
       model,
       updateCounts,
       pickImage,
+      editByPointer,
     );
     rowHandles.set(squawk.id, handle);
     stack.append(handle.el);
@@ -1043,6 +1096,8 @@ interface RowHandle {
   setImageIds(ids: number[]): void;
   flushSave(): void;
   cancelSave(): void;
+  /** Stop watching the row's size; call before dropping the row. */
+  dispose(): void;
 }
 
 function buildSquawkRow(
@@ -1052,6 +1107,7 @@ function buildSquawkRow(
   model: Map<number, Squawk>,
   onChange: () => void,
   onPickImage: (squawkId: number) => void,
+  onEdit: (squawkId: number) => void,
 ): RowHandle {
   const row = document.createElement("div");
   row.className = `squawk-row ${stateClass(squawk.state)}`;
@@ -1068,6 +1124,60 @@ function buildSquawkRow(
   input.autocomplete = "off";
   input.setAttribute("aria-label", `Squawk ${squawk.seq}`);
   input.dataset.viMode = "nav";
+  // No soft keyboard until edit mode: a tap on a phone reads the row, it doesn't type.
+  input.inputMode = "none";
+
+  // The text as read (#146): wrapped, clamped to CLAMP_LINES while idle, and a
+  // click or tap toggles the whole of it. The <input> stays in the row, so focus,
+  // the key dispatcher and autosave all run through it as before. Outside edit
+  // mode it lies over this block, invisible (styles.css), so it still takes the
+  // click. The block is aria-hidden: the input carries the label and the value.
+  const body = document.createElement("div");
+  body.className = "squawk-row__body";
+  const display = document.createElement("div");
+  display.className = "squawk-row__display";
+  display.setAttribute("aria-hidden", "true");
+  // The clamp sits inside the padded block, not on it: a clamped box clips at its
+  // padding edge, so a padded one shows the top of the next line in its padding.
+  const clamp = document.createElement("div");
+  clamp.className = "squawk-row__clamp";
+  display.append(clamp);
+  const more = document.createElement("span");
+  more.className = "squawk-row__more mono";
+  more.setAttribute("aria-hidden", "true");
+  more.textContent = "…more";
+  body.append(display, more, input);
+
+  /** Flag the row when its text runs past the clamp, which shows the cue. */
+  function measure(): void {
+    row.classList.toggle(
+      "squawk-row--clamped",
+      overflowsClamp(clamp.scrollHeight, parseFloat(getComputedStyle(clamp).lineHeight)),
+    );
+  }
+  function showText(text: string): void {
+    clamp.textContent = text;
+    measure();
+  }
+  // Width changes (a resize, the first layout) change where the text wraps.
+  const resizeObserver =
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measure());
+  resizeObserver?.observe(clamp);
+  // A web font that loads late can re-wrap the text without resizing the box.
+  document.fonts?.ready.then(measure);
+  showText(squawk.text);
+
+  input.addEventListener("click", () => {
+    // A nav-focused row already shows all of it, so a toggle there would only
+    // leave the row stuck open once focus moved on.
+    if (row.classList.contains("squawk-row--editing")) return;
+    if (row.classList.contains("squawk-row--nav-focus")) return;
+    row.classList.toggle("squawk-row--expanded");
+  });
+  // A double-click edits. Its two clicks toggle the row open and shut again.
+  input.addEventListener("dblclick", () => {
+    if (!row.classList.contains("squawk-row--editing")) onEdit(squawk.id);
+  });
 
   let lastSaved = squawk.text;
   const save = debounce(() => {
@@ -1081,7 +1191,10 @@ function buildSquawkRow(
       .catch((err) => console.error("autosave failed", err));
   }, AUTOSAVE_IDLE_MS);
 
-  input.addEventListener("input", () => save());
+  input.addEventListener("input", () => {
+    showText(input.value);
+    save();
+  });
   input.addEventListener("blur", () => save.flush());
 
   const select = document.createElement("select");
@@ -1204,7 +1317,7 @@ function buildSquawkRow(
   imageCell.append(attachBtn, thumbBtn);
   renderImage();
 
-  row.append(seq, input, select, recorder, imageCell);
+  row.append(seq, body, select, recorder, imageCell);
 
   return {
     el: row,
@@ -1213,6 +1326,7 @@ function buildSquawkRow(
     setText: (text: string): void => {
       input.value = text;
       lastSaved = text;
+      showText(text);
     },
     setState: (state: SquawkState): void => {
       applyState(row, state);
@@ -1231,7 +1345,9 @@ function buildSquawkRow(
     cancelSave: (): void => {
       save.cancel();
       input.value = lastSaved;
+      showText(lastSaved);
     },
+    dispose: (): void => resizeObserver?.disconnect(),
   };
 }
 

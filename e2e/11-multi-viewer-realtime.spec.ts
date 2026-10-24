@@ -140,7 +140,7 @@ test.describe("Multi-viewer realtime", () => {
       const select = row.locator("select");
       await expect(select).toHaveValue("confirmed");
       await expect(select.locator("option:checked")).toHaveText("✓ confirmed");
-      await expect(row.locator(".squawk-row__text")).toHaveCSS(
+      await expect(row.locator(".squawk-row__display")).toHaveCSS(
         "text-decoration-line",
         "line-through",
       );

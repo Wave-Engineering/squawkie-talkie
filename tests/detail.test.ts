@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import type { Squawk } from "../src/server/types.ts";
 import {
+  CLAMP_LINES,
   countByState,
   cycleState,
   debounce,
   fitWithin,
   onEnter,
+  overflowsClamp,
   stateClass,
 } from "../src/client/detail.ts";
 
@@ -171,4 +173,31 @@ test("fitWithin scales the longest edge to maxEdge, preserving aspect", () => {
 
 test("fitWithin never upscales a small image", () => {
   expect(fitWithin(100, 50, 1600)).toEqual({ width: 100, height: 50 });
+});
+
+// --- overflowsClamp (#146) -----------------------------------------------------
+
+test("overflowsClamp: text within the clamp shows no cue", () => {
+  // 3 lines of 20px.
+  expect(overflowsClamp(60, 20)).toBe(false);
+  expect(overflowsClamp(20, 20)).toBe(false); // one line
+});
+
+test("overflowsClamp: a fourth line is hidden text", () => {
+  expect(overflowsClamp(80, 20)).toBe(true);
+});
+
+test("overflowsClamp: a sub-pixel overshoot of an exact fit is not overflow", () => {
+  expect(overflowsClamp(60.6, 20)).toBe(false);
+});
+
+test("overflowsClamp: an unreadable line height never shows the cue", () => {
+  expect(overflowsClamp(500, Number.NaN)).toBe(false);
+  expect(overflowsClamp(500, 0)).toBe(false);
+});
+
+test("overflowsClamp defaults to CLAMP_LINES", () => {
+  expect(CLAMP_LINES).toBe(3);
+  expect(overflowsClamp(20 * 4, 20, 4)).toBe(false);
+  expect(overflowsClamp(20 * 4, 20)).toBe(true);
 });
