@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-24 — reserved list names
+
 ### Added
 - **Reserved list names in `sqtk`** (#147): `triage` resolves to this repo's `<repo>:triage`
   (the same `<repo>` as `add`'s prefix) and `needs` to `bj:needs`, for `add`, `show`, `walk`,
