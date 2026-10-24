@@ -93,9 +93,9 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | Method | Path | Body | Returns |
 |---|---|---|---|
 | GET | `/healthz` | — | `{ ok: true }` |
-| GET | `/api/lists` | — | `List[]` (no `next_seq`) |
-| POST | `/api/lists` | `{ name }` | `201 List` |
-| GET | `/api/lists/:id` | — | `{ ...List, squawks: Squawk[] }` (squawks newest-first) |
+| GET | `/api/lists` | — | `List[]` (no `next_seq`), each with `counts` (one key per state, zero-filled) and `last_activity` (the latest of the list's `created_at` and its squawks' `created_at`/`updated_at`), from one query |
+| POST | `/api/lists` | `{ name }` | `201 List`, with `counts` and `last_activity` |
+| GET | `/api/lists/:id` | — | `{ ...List, counts, last_activity, squawks: Squawk[] }` (squawks newest-first) |
 | GET | `/api/lists/by-name?name=…` | — | same shape as by-id, looked up by **exact name** (oldest match — names aren't unique); `400` if `name` missing, `404` if none |
 | DELETE | `/api/lists/:id` | — | `{ ok: true }` (cascades squawks) |
 | GET | `/api/lists/:id/squawks` | — | `Squawk[]` |

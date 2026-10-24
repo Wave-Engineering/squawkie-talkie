@@ -12,7 +12,13 @@
 
 import { Database } from "bun:sqlite";
 import { MAX_IMAGES_PER_SQUAWK, SQUAWK_STATES } from "./types.ts";
-import type { List, Squawk, SquawkState } from "./types.ts";
+import type {
+  List,
+  ListWithStats,
+  Squawk,
+  SquawkState,
+  StateCounts,
+} from "./types.ts";
 
 /**
  * `CREATE TABLE` for `squawks` under `name`, its `state` CHECK built from
@@ -236,6 +242,58 @@ export function getListByName(name: string): List | null {
       .query("SELECT * FROM lists WHERE name = ? ORDER BY id ASC LIMIT 1")
       .get(name) as List | null) ?? null
   );
+}
+
+/** One row of the stats query: a list, joined to one of its states (or none). */
+interface ListStatsRow extends List {
+  state: SquawkState | null;
+  n: number;
+  max_updated: string | null;
+  max_created: string | null;
+}
+
+/**
+ * Lists with their counts and `last_activity` (#145), oldest first, in one query:
+ * a row per (list, state) present, folded here. `where` narrows it to one list.
+ */
+function queryListsWithStats(where = "", ...params: number[]): ListWithStats[] {
+  const rows = getDb()
+    .query(
+      `SELECT l.*, s.state AS state, COUNT(s.id) AS n,
+              MAX(s.updated_at) AS max_updated, MAX(s.created_at) AS max_created
+       FROM lists l LEFT JOIN squawks s ON s.list_id = l.id
+       ${where}
+       GROUP BY l.id, s.state
+       ORDER BY l.id ASC`,
+    )
+    .all(...params) as ListStatsRow[];
+
+  const byId = new Map<number, ListWithStats>();
+  for (const { state, n, max_updated, max_created, ...list } of rows) {
+    let entry = byId.get(list.id);
+    if (!entry) {
+      const counts = Object.fromEntries(SQUAWK_STATES.map((s) => [s, 0])) as StateCounts;
+      entry = { ...list, counts, last_activity: list.created_at };
+      byId.set(list.id, entry);
+    }
+    if (state === null) continue; // a list with no squawks
+    entry.counts[state] = n;
+    // ISO timestamps from now() order as strings.
+    for (const ts of [max_updated, max_created]) {
+      if (ts !== null && ts > entry.last_activity) entry.last_activity = ts;
+    }
+  }
+  return [...byId.values()];
+}
+
+/** Return all lists with their counts and `last_activity`, oldest first. */
+export function listListsWithStats(): ListWithStats[] {
+  return queryListsWithStats();
+}
+
+/** Return one list with its counts and `last_activity`, or null if absent. */
+export function getListWithStats(id: number): ListWithStats | null {
+  return queryListsWithStats("WHERE l.id = ?", id)[0] ?? null;
 }
 
 /**

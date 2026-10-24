@@ -29,7 +29,7 @@ import {
   SQUAWK_STATES,
   STATE_GLYPHS,
 } from "../server/types.ts";
-import type { Squawk, SquawkState } from "../server/types.ts";
+import type { Squawk, SquawkState, StateCounts } from "../server/types.ts";
 import {
   createSquawk,
   deleteSquawk as apiDeleteSquawk,
@@ -42,6 +42,7 @@ import {
   type ListDetail,
 } from "./api.ts";
 import { openCarousel } from "./carousel.ts";
+import { changedSquawkIds, markSeen, readLastSeen, renderCounts } from "./counts.ts";
 import {
   hasSeen,
   replayTour,
@@ -155,7 +156,7 @@ export function stateClass(state: SquawkState): string {
 }
 
 /** Per-state tallies for the glyph counts badge (`○3 ✓2 ✗1 ◌4 ↗1`). */
-export type StateCounts = Record<SquawkState, number>;
+export type { StateCounts };
 
 /** Count squawks by state. */
 export function countByState(squawks: Iterable<Squawk>): StateCounts {
@@ -358,7 +359,17 @@ export async function renderList(
   title.textContent = detail.name;
   const counts = document.createElement("span");
   counts.className = "detail__counts mono";
-  header.append(title, counts);
+  // Rows changed since this browser last opened the list (#145), counted here.
+  const changedIds = new Set<number>();
+  const changedBadge = document.createElement("span");
+  changedBadge.className = "detail__changed mono";
+  changedBadge.title = "Changed since this list was last opened here";
+  const paintChanged = (): void => {
+    changedBadge.textContent = `●${changedIds.size} changed`;
+    changedBadge.hidden = changedIds.size === 0;
+  };
+  paintChanged();
+  header.append(title, counts, changedBadge);
   const updateCounts = (): void =>
     renderCounts(counts, countByState(model.values()));
 
@@ -642,6 +653,7 @@ export async function renderList(
 
     updateSquawk(squawkId, { state: newState }, initials)
       .then((updated) => {
+        markSeen(id, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         updateCounts();
       })
@@ -682,6 +694,7 @@ export async function renderList(
     }
     model.delete(squawkId);
     settleInTimes.delete(squawkId);
+    if (changedIds.delete(squawkId)) paintChanged();
     if (focusedSquawkId === squawkId) {
       focusedSquawkId = null;
     }
@@ -744,7 +757,13 @@ export async function renderList(
   helpHint.title = "Keyboard shortcuts";
   helpHint.addEventListener("click", showKeymapOverlay);
 
+  /** A change seen live on this page is seen: it doesn't badge the list later. */
+  function seeSquawk(squawk: Squawk): void {
+    markSeen(id, squawk.updated_at > squawk.created_at ? squawk.updated_at : squawk.created_at);
+  }
+
   function insertSquawk(squawk: Squawk, isLocal = false): void {
+    seeSquawk(squawk);
     if (isLocal) {
       settleInTimes.set(squawk.id, Date.now());
       undoBuffer = { id: squawk.id, text: squawk.text };
@@ -772,6 +791,7 @@ export async function renderList(
       insertSquawk(squawk);
       return;
     }
+    seeSquawk(squawk);
     model.set(squawk.id, squawk);
     handle.setState(squawk.state);
     handle.setRecorder(squawk.initials);
@@ -880,6 +900,19 @@ export async function renderList(
     stack.append(handle.el);
   }
   updateCounts();
+
+  // Changed since this browser last opened the list (#145): those rows are marked
+  // and the header counts them, until the next load. Then the list counts as seen.
+  const lastSeen = readLastSeen();
+  for (const changedId of changedSquawkIds(
+    detail.squawks,
+    lastSeen === null ? null : lastSeen[String(id)],
+  )) {
+    changedIds.add(changedId);
+    rowHandles.get(changedId)?.el.classList.add("squawk-row--changed");
+  }
+  paintChanged();
+  markSeen(id, detail.last_activity);
 
   // --- Mode indicator bar (vim-style footer) ---
   const modeBar = document.createElement("div");
@@ -1186,6 +1219,7 @@ function buildSquawkRow(
     updateSquawk(squawk.id, { text }, initials)
       .then((updated) => {
         lastSaved = text;
+        markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
       })
       .catch((err) => console.error("autosave failed", err));
@@ -1217,6 +1251,7 @@ function buildSquawkRow(
     onChange();
     updateSquawk(squawk.id, { state }, initials)
       .then((updated) => {
+        markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         onChange();
       })
@@ -1354,24 +1389,6 @@ function buildSquawkRow(
 function setRecorderText(el: HTMLElement, initials: string): void {
   el.textContent = initials;
   el.setAttribute("aria-label", `recorded by ${initials}`);
-}
-
-/**
- * Render the counts as glyph tallies in state order — `○3 ✓2 ✗1 ◌4 ↗1` — omitting
- * every state with a zero count, so the glyph says what each number counts (#137).
- */
-function renderCounts(el: HTMLElement, counts: StateCounts): void {
-  el.replaceChildren(
-    ...STATES.filter((s) => counts[s] > 0).map((s) => countSpan(counts[s], s)),
-  );
-}
-
-function countSpan(n: number, state: SquawkState): HTMLSpanElement {
-  const span = document.createElement("span");
-  span.className = `count count--${state}`;
-  span.textContent = `${STATE_GLYPHS[state]}${n}`;
-  span.title = `${state}: ${n}`;
-  return span;
 }
 
 function applyState(row: HTMLElement, state: SquawkState): void {
