@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -9,7 +9,11 @@ export default defineConfig({
     baseURL: "http://localhost:7701",
     headless: true,
   },
-  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
+  projects: [
+    { name: "chromium", use: { browserName: "chromium" } },
+    // Phone viewport + touch, for the specs where a tap must behave (#146).
+    { name: "mobile", use: { ...devices["Pixel 7"] }, testMatch: /21-wrap-expand\.spec\.ts/ },
+  ],
   webServer: {
     command: "SQUAWK_DB=:memory: PORT=7701 bun run src/server/index.ts",
     port: 7701,

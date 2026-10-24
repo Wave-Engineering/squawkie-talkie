@@ -563,6 +563,88 @@ test("each list row has an Export button that downloads the list as JSON", async
   }
 });
 
+// --- #146: wrapped text, clamped, tap to expand ------------------------------
+
+test("an idle row shows its text in a display block, with the input riding along", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const display = row10.querySelector<HTMLElement>(".squawk-row__display")!;
+  expect(display.textContent).toBe("squawk 2");
+  expect(display.getAttribute("aria-hidden")).toBe("true");
+  expect(row10.classList.contains("squawk-row--editing")).toBe(false);
+  // The input is still the row's one field (focus, keys, autosave), but a tap
+  // on it raises no soft keyboard outside edit mode.
+  const input10 = row10.querySelector<HTMLInputElement>("input")!;
+  expect(row10.querySelectorAll("input")).toHaveLength(1);
+  expect(input10.value).toBe("squawk 2");
+  expect(input10.inputMode).toBe("none");
+});
+
+test("edit mode brings the field; leaving it shows the edited text in the block", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const newInput = container.querySelector<HTMLInputElement>(".squawk-row--new .squawk-row__text")!;
+  const row10 = container.querySelector<HTMLElement>('[data-squawk-id="10"]')!;
+  const input10 = row10.querySelector<HTMLInputElement>("input")!;
+  const display = row10.querySelector<HTMLElement>(".squawk-row__display")!;
+
+  newInput.focus();
+  press(newInput, "ArrowDown");
+  press(input10, "i");
+  expect(row10.classList.contains("squawk-row--editing")).toBe(true);
+  expect(input10.inputMode).toBe("text");
+
+  input10.value = "squawk 2, edited";
+  input10.dispatchEvent(new Event("input", { bubbles: true }));
+  press(input10, "Escape");
+
+  expect(row10.classList.contains("squawk-row--editing")).toBe(false);
+  expect(display.textContent).toBe("squawk 2, edited");
+  expect(input10.inputMode).toBe("none");
+});
+
+test("a click toggles the row's expansion, and does nothing while editing", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const row11 = container.querySelector<HTMLElement>('[data-squawk-id="11"]')!;
+  const input11 = row11.querySelector<HTMLInputElement>("input")!;
+  input11.click();
+  expect(row11.classList.contains("squawk-row--expanded")).toBe(true);
+  input11.click();
+  expect(row11.classList.contains("squawk-row--expanded")).toBe(false);
+
+  row11.classList.add("squawk-row--editing");
+  input11.click();
+  expect(row11.classList.contains("squawk-row--expanded")).toBe(false);
+});
+
+test("a remote text update refreshes an unfocused row's display block", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  applyEvent(
+    { type: "squawk.updated", squawk: { ...mkSquawk(11, 1), text: "remote text" } },
+    { view: activeView(), activeElement: document.activeElement },
+  );
+  const display = container.querySelector<HTMLElement>(
+    '[data-squawk-id="11"] .squawk-row__display',
+  )!;
+  expect(display.textContent).toBe("remote text");
+});
+
 // --- Onboarding coach tour (Epic #69, #72): seen-flag gate ------------------
 
 /** Stub fetch so `GET /api/lists` returns the given rows (default: one list). */

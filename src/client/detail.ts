@@ -67,6 +67,9 @@ const SETTLE_IN_MS = 30_000;
 /** Chord timeout: how long to wait for the second key in dd/yy. */
 const CHORD_TIMEOUT_MS = 500;
 
+/** Lines an idle squawk's text shows before it is clamped (#146). Matches styles.css. */
+export const CLAMP_LINES = 3;
+
 /** Longest edge (px) a picked image is scaled down to before upload. */
 const IMAGE_MAX_EDGE = 1600;
 
@@ -229,6 +232,24 @@ export function onEnter(input: EnterInput): EnterDecision {
 }
 
 /**
+ * Whether text of content height `scrollHeight` (which includes `paddingY`) runs
+ * past `lines` lines of `lineHeight` px, so a clamped row hides some of it (#146).
+ * It compares against the clamp, not the box, so the answer holds while a row is
+ * expanded too. Pure, so it's unit-tested; an unreadable line height (NaN, 0)
+ * reads as no overflow, so the cue never shows on a guess.
+ */
+export function overflowsClamp(
+  scrollHeight: number,
+  lineHeight: number,
+  paddingY: number,
+  lines: number = CLAMP_LINES,
+): boolean {
+  if (!(lineHeight > 0)) return false;
+  // A pixel of slack absorbs sub-pixel rounding of a text that fits exactly.
+  return scrollHeight - paddingY > lineHeight * lines + 1;
+}
+
+/**
  * Target dimensions to fit `(w, h)` inside a `maxEdge`×`maxEdge` box while
  * preserving aspect ratio. Never upscales — a source already within the box is
  * returned unchanged. Pure (no DOM), so it's unit-tested; the canvas re-encode
@@ -382,6 +403,7 @@ export async function renderList(
     handle.el.classList.add("squawk-row--editing");
     handle.el.classList.remove("squawk-row--nav-focus");
     handle.input.dataset.viMode = "edit";
+    handle.input.inputMode = "text";
     handle.input.focus();
     const end = handle.input.value.length;
     handle.input.setSelectionRange(end, end);
@@ -406,6 +428,7 @@ export async function renderList(
     stack.classList.remove("detail__stack--has-edit");
     if (handle) {
       handle.input.dataset.viMode = "nav";
+      handle.input.inputMode = "none";
       handle.el.classList.add("squawk-row--nav-focus");
     }
     updateModeBar();
@@ -644,6 +667,7 @@ export async function renderList(
   function removeSquawkRow(squawkId: number): void {
     const handle = rowHandles.get(squawkId);
     if (handle) {
+      handle.dispose();
       handle.el.remove();
       rowHandles.delete(squawkId);
     }
@@ -1043,6 +1067,8 @@ interface RowHandle {
   setImageIds(ids: number[]): void;
   flushSave(): void;
   cancelSave(): void;
+  /** Stop watching the row's size; call before dropping the row. */
+  dispose(): void;
 }
 
 function buildSquawkRow(
@@ -1068,6 +1094,48 @@ function buildSquawkRow(
   input.autocomplete = "off";
   input.setAttribute("aria-label", `Squawk ${squawk.seq}`);
   input.dataset.viMode = "nav";
+  // No soft keyboard until edit mode: a tap on a phone reads the row, it doesn't type.
+  input.inputMode = "none";
+
+  // The text as read (#146): wrapped, clamped to CLAMP_LINES while idle, and a
+  // click or tap toggles the whole of it. The <input> stays in the row, so focus,
+  // the key dispatcher and autosave all run through it as before. Outside edit
+  // mode it lies over this block, invisible (styles.css), so it still takes the
+  // click. The block is aria-hidden: the input carries the label and the value.
+  const body = document.createElement("div");
+  body.className = "squawk-row__body";
+  const display = document.createElement("div");
+  display.className = "squawk-row__display";
+  display.setAttribute("aria-hidden", "true");
+  const more = document.createElement("span");
+  more.className = "squawk-row__more mono";
+  more.setAttribute("aria-hidden", "true");
+  more.textContent = "…more";
+  body.append(display, more, input);
+
+  /** Flag the row when its text runs past the clamp, which shows the cue. */
+  function measure(): void {
+    const style = getComputedStyle(display);
+    const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    row.classList.toggle(
+      "squawk-row--clamped",
+      overflowsClamp(display.scrollHeight, parseFloat(style.lineHeight), paddingY || 0),
+    );
+  }
+  function showText(text: string): void {
+    display.textContent = text;
+    measure();
+  }
+  // Width changes (a resize, the first layout) change where the text wraps.
+  const resizeObserver =
+    typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => measure());
+  resizeObserver?.observe(display);
+  showText(squawk.text);
+
+  input.addEventListener("click", () => {
+    if (row.classList.contains("squawk-row--editing")) return;
+    row.classList.toggle("squawk-row--expanded");
+  });
 
   let lastSaved = squawk.text;
   const save = debounce(() => {
@@ -1081,7 +1149,10 @@ function buildSquawkRow(
       .catch((err) => console.error("autosave failed", err));
   }, AUTOSAVE_IDLE_MS);
 
-  input.addEventListener("input", () => save());
+  input.addEventListener("input", () => {
+    showText(input.value);
+    save();
+  });
   input.addEventListener("blur", () => save.flush());
 
   const select = document.createElement("select");
@@ -1204,7 +1275,7 @@ function buildSquawkRow(
   imageCell.append(attachBtn, thumbBtn);
   renderImage();
 
-  row.append(seq, input, select, recorder, imageCell);
+  row.append(seq, body, select, recorder, imageCell);
 
   return {
     el: row,
@@ -1213,6 +1284,7 @@ function buildSquawkRow(
     setText: (text: string): void => {
       input.value = text;
       lastSaved = text;
+      showText(text);
     },
     setState: (state: SquawkState): void => {
       applyState(row, state);
@@ -1231,7 +1303,9 @@ function buildSquawkRow(
     cancelSave: (): void => {
       save.cancel();
       input.value = lastSaved;
+      showText(lastSaved);
     },
+    dispose: (): void => resizeObserver?.disconnect(),
   };
 }
 
