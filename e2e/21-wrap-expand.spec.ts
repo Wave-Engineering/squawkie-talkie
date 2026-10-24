@@ -60,14 +60,19 @@ test.describe("Wrapped squawk text (#146)", () => {
 
   test("a double-click edits the text, which the row then shows", async ({
     seededPage: page,
-  }) => {
+  }, testInfo) => {
     await createList(page, "WrapEdit");
     await addSquawk(page, "first draft");
 
-    // On a phone this is a double-tap, the one way into edit mode there.
+    // On a phone this is two real taps, the one way into edit mode there.
     const row = page.locator("[data-squawk-id]").first();
     const input = row.locator("input");
-    await input.dblclick();
+    if (testInfo.project.use.hasTouch) {
+      await input.tap();
+      await input.tap();
+    } else {
+      await input.dblclick();
+    }
     await expect(row).toHaveClass(/squawk-row--editing/);
     await expect(row).not.toHaveClass(/squawk-row--expanded/);
     expect(await input.evaluate((el: HTMLInputElement) => el.inputMode)).toBe("text");

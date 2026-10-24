@@ -664,6 +664,31 @@ test("a double-click edits the row, moving nav focus off another", async () => {
   expect(document.activeElement).toBe(input11);
 });
 
+test("focus leaving the edited row ends the edit and its nav focus", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const stack = container.querySelector<HTMLElement>(".detail__stack")!;
+  const newInput = container.querySelector<HTMLInputElement>(".squawk-row--new .squawk-row__text")!;
+  const row11 = container.querySelector<HTMLElement>('[data-squawk-id="11"]')!;
+  const input11 = row11.querySelector<HTMLInputElement>("input")!;
+  input11.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  expect(row11.classList.contains("squawk-row--editing")).toBe(true);
+
+  // Within the row (the state select): still editing.
+  row11.querySelector<HTMLSelectElement>("select")!.focus();
+  expect(row11.classList.contains("squawk-row--editing")).toBe(true);
+
+  input11.focus();
+  newInput.focus();
+  expect(row11.classList.contains("squawk-row--editing")).toBe(false);
+  expect(row11.classList.contains("squawk-row--nav-focus")).toBe(false);
+  expect(stack.classList.contains("detail__stack--has-edit")).toBe(false);
+  expect(input11.inputMode).toBe("none");
+});
+
 test("a remote text update refreshes an unfocused row's display block", async () => {
   const { renderList } = await import("../src/client/detail.ts");
   const { applyEvent, activeView } = await import("../src/client/realtime.ts");

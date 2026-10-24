@@ -846,6 +846,22 @@ export async function renderList(
     }
   }, true);
 
+  // Focus leaving the row being edited (a tap or a click elsewhere) ends the edit
+  // and its nav focus: a phone has no Esc or arrow keys to end it (#146). Focus
+  // moving within the row, or the window losing focus, leaves the edit alone.
+  stack.addEventListener("focusout", (event) => {
+    if (mode !== "edit" || focusedSquawkId === null) return;
+    const handle = rowHandles.get(focusedSquawkId);
+    if (!handle || event.target !== handle.input) return;
+    const next = event.relatedTarget;
+    if (next instanceof Node && handle.el.contains(next)) return;
+    if (document.hasFocus?.() === false) return;
+    exitEditMode(true);
+    handle.el.classList.remove("squawk-row--nav-focus");
+    focusedSquawkId = null;
+    updateModeBar();
+  });
+
   // Existing squawks arrive newest-first from the API; append in order.
   for (const squawk of detail.squawks) {
     model.set(squawk.id, squawk);

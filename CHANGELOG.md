@@ -15,7 +15,8 @@ at `v0.3.0`**.
   - A click or tap shows all of it in place, and a second one clamps it again.
   - The row focused in nav mode shows all of it.
   - A double-click (a double-tap on a phone) edits the row, as `i` and `Enter` already did;
-    the field returns in edit mode. A single tap raises no keyboard.
+    the field returns in edit mode. A single tap raises no keyboard. Focus leaving the row,
+    such as a tap elsewhere, saves and ends the edit, since a phone has no `Esc`.
   - On a phone the text takes a full-width line under the seq, state and image, which
     otherwise leave it about a word wide.
 

@@ -404,6 +404,9 @@ body {
   background: var(--surface-2);
   border-color: var(--accent-dim);
 }
+.squawk-row__body:focus-within .squawk-row__more {
+  background: linear-gradient(to right, transparent, var(--surface-2) 35%);
+}
 
 .squawk-row__body .squawk-row__text {
   position: absolute;
