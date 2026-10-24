@@ -1006,8 +1006,10 @@ body {
   font-size: 0.7rem;
   color: var(--accent);
 }
+/* Hidden but still holding its space, so names line up and don't shift. */
 .list-row__changed[hidden] {
-  display: none;
+  display: inline;
+  visibility: hidden;
 }
 
 .list-row__open:hover {

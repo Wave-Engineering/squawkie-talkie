@@ -754,7 +754,8 @@ test("a list changed since it was last opened is badged; opening it clears the b
   const { renderLists } = await import("../src/client/lists.ts");
   const { renderList } = await import("../src/client/detail.ts");
   const later = "2026-01-02T00:00:00.000Z";
-  localStorage.setItem("sqtk.lastSeen", JSON.stringify({ "1": "2026-01-01T00:00:00.000Z" }));
+  // Seen before the payload's last_activity, so opening the list must move it.
+  localStorage.setItem("sqtk.lastSeen", JSON.stringify({ "1": "2025-12-31T00:00:00.000Z" }));
 
   stubLists([mkListRow(1, "Regression", { open: 2 }, { last_activity: later })]);
   const before = document.createElement("div");
@@ -804,6 +805,30 @@ test("the item page marks rows changed since the last open and counts them", asy
   expect(JSON.parse(localStorage.getItem("sqtk.lastSeen")!)["1"]).toBe(payload.last_activity);
 });
 
+test("the reader's own edit is recorded as seen, with no event needed", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  const edited = "2026-01-05T00:00:00.000Z";
+  globalThis.fetch = (async (_url: string, init?: RequestInit) =>
+    new Response(
+      JSON.stringify(
+        init?.method === "PATCH" ? { ...mkSquawk(10, 2), state: "retired", updated_at: edited } : listPayload(),
+      ),
+      { headers: { "content-type": "application/json" } },
+    )) as unknown as typeof fetch;
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+  expect(JSON.parse(localStorage.getItem("sqtk.lastSeen")!)["1"]).toBe(listPayload().last_activity);
+
+  const select = container.querySelector<HTMLSelectElement>('[data-squawk-id="10"] select')!;
+  select.value = "retired";
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  await settle();
+  // Only the PATCH response moved it: no squawk.updated event was applied.
+  expect(JSON.parse(localStorage.getItem("sqtk.lastSeen")!)["1"]).toBe(edited);
+});
+
 test("with localStorage throwing, both pages render with no badge and no error", async () => {
   const { renderLists } = await import("../src/client/lists.ts");
   const { renderList } = await import("../src/client/detail.ts");
@@ -832,7 +857,7 @@ test("with localStorage throwing, both pages render with no badge and no error",
     document.body.append(detailEl);
     await renderList(detailEl, "1");
     expect(detailEl.querySelectorAll("[data-squawk-id]")).toHaveLength(2);
-    expect(detailEl.querySelector(".detail__changed")).toBeNull();
+    expect(detailEl.querySelector<HTMLElement>(".detail__changed")!.hidden).toBe(true);
     expect(detailEl.querySelectorAll(".squawk-row--changed")).toHaveLength(0);
   } finally {
     if (descriptor) Object.defineProperty(window, "localStorage", descriptor);

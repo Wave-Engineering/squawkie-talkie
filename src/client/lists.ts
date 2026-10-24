@@ -13,7 +13,13 @@
  */
 import type { List, ListWithStats } from "../server/types.ts";
 import { createList, deleteList, getList, getLists } from "./api.ts";
-import { isChanged, isSettled, readLastSeen, renderCounts } from "./counts.ts";
+import {
+  describeCounts,
+  isChanged,
+  isSettled,
+  readLastSeen,
+  renderCounts,
+} from "./counts.ts";
 import {
   type CoachStep,
   endActiveTour,
@@ -329,17 +335,31 @@ export function renderLists(container: HTMLElement): void {
 
     // What is in the list (#145): its counts, struck through when settled, and a
     // badge when it changed since this browser last opened it.
+    // The open button's accessible name says all of it, so the glyphs are hidden
+    // from assistive tech rather than read twice.
     const counts = document.createElement("span");
     counts.className = "list-row__counts mono";
+    counts.setAttribute("aria-hidden", "true");
     const changed = document.createElement("span");
     changed.className = "list-row__changed mono";
     changed.textContent = "●";
     changed.title = "Changed since you last opened it";
+    changed.setAttribute("aria-hidden", "true");
     function paintStats(fresh: ListWithStats): void {
       renderCounts(counts, fresh.counts);
-      row.classList.toggle("list-row--settled", isSettled(fresh.counts));
+      const settled = isSettled(fresh.counts);
+      row.classList.toggle("list-row--settled", settled);
       const seen = readLastSeen();
       changed.hidden = !isChanged(fresh, seen === null ? null : seen[String(fresh.id)]);
+      open.setAttribute(
+        "aria-label",
+        [
+          list.name,
+          describeCounts(fresh.counts),
+          ...(settled ? ["settled"] : []),
+          ...(changed.hidden ? [] : ["changed since you last opened it"]),
+        ].join(", "),
+      );
     }
     paintStats(list);
     statsPainters.set(list.id, paintStats);
@@ -350,19 +370,23 @@ export function renderLists(container: HTMLElement): void {
 
   /** Re-fetch every list's stats and repaint the rows in place. */
   async function refreshStats(): Promise<void> {
+    const gen = ++statsGen;
     let fresh: ListWithStats[];
     try {
       fresh = await getLists();
     } catch {
       return; // keep what is shown; the indicator signals a lost connection
     }
+    if (gen !== statsGen) return; // a newer fetch has painted, or will
     for (const l of fresh) {
       const i = model.findIndex((m) => m.id === l.id);
       if (i >= 0) model[i] = l;
       statsPainters.get(l.id)?.(l);
     }
   }
-  // A burst of squawk events costs one fetch.
+  // A burst of squawk events costs one fetch, and only the latest fetch paints:
+  // the debounce spaces the requests, but responses can still arrive out of order.
+  let statsGen = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   function scheduleRefresh(): void {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
@@ -682,6 +706,7 @@ export function renderLists(container: HTMLElement): void {
     },
     // On reconnect: re-fetch and reconcile what changed while we were offline.
     resync: async () => {
+      const gen = ++statsGen;
       let fresh: ListWithStats[];
       try {
         fresh = await getLists();
@@ -690,10 +715,10 @@ export function renderLists(container: HTMLElement): void {
       }
       const freshIds = new Set(fresh.map((l) => l.id));
       // Add lists created while offline (addList de-dupes anything already shown),
-      // and repaint the stats of the ones already shown.
+      // and repaint the stats of the ones already shown, unless a newer fetch has.
       for (const l of fresh) {
         addList(l);
-        statsPainters.get(l.id)?.(l);
+        if (gen === statsGen) statsPainters.get(l.id)?.(l);
       }
       // Remove lists deleted while offline.
       for (const l of [...model]) {

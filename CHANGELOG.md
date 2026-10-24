@@ -19,8 +19,9 @@ at `v0.3.0`**.
   updates live, and with `localStorage` unavailable the pages show no dots and raise no errors.
   A list this browser has never opened is dotted once it has any squawk activity.
 - **`GET /api/lists` and `GET /api/lists/:id` carry `counts` and `last_activity`** (#145).
-  `counts` has one key per state, and every list's stats come from one query. A squawk's
-  deletion does not move `last_activity`. `sqtk` ignores both fields.
+  `counts` has one key per state, and every list's stats come from one query. Deleting a
+  squawk does not move `last_activity`, and neither does adding or removing a photo, which
+  leaves the squawk's `updated_at` alone. `sqtk` ignores both fields.
 
 ### Changed
 - **A squawk's text wraps, and a tap expands it** (#146). An idle row used to show its text

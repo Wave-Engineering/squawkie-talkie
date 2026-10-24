@@ -25,6 +25,12 @@ function countSpan(n: number, state: SquawkState): HTMLSpanElement {
   return span;
 }
 
+/** The counts in words, for assistive tech: `2 open, 1 retired`, or `empty`. */
+export function describeCounts(counts: StateCounts): string {
+  const parts = SQUAWK_STATES.filter((s) => counts[s] > 0).map((s) => `${counts[s]} ${s}`);
+  return parts.length > 0 ? parts.join(", ") : "empty";
+}
+
 /** A list is settled, and struck through, when it has squawks and none is open. */
 export function isSettled(counts: StateCounts): boolean {
   const total = SQUAWK_STATES.reduce((sum, s) => sum + counts[s], 0);

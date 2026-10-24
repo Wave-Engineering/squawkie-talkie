@@ -59,7 +59,8 @@ export type StateCounts = Record<SquawkState, number>;
  * A list with what the lists page shows about it (#145): its squawk counts by
  * state, and `last_activity`, the latest of its own `created_at` and its squawks'
  * `created_at`/`updated_at` (ISO, the same format as `updated_at`). A squawk
- * deleted from the list does not move it.
+ * deleted from the list does not move it, and neither does a photo added or
+ * removed, since that leaves the squawk's `updated_at` alone.
  */
 export interface ListWithStats extends List {
   counts: StateCounts;

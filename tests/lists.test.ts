@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 
 import { getLists } from "../src/client/api.ts";
-import { isChanged, isSettled } from "../src/client/counts.ts";
+import { describeCounts, isChanged, isSettled } from "../src/client/counts.ts";
 import { deleteReducer, exportFilename } from "../src/client/lists.ts";
 
 // --- isSettled / isChanged (#145) ---------------------------------------------
@@ -12,6 +12,13 @@ test("isSettled: struck once nothing is open, never when empty", () => {
   expect(isSettled({ ...zero, retired: 2, confirmed: 1 })).toBe(true);
   expect(isSettled({ ...zero, open: 1, retired: 2 })).toBe(false);
   expect(isSettled(zero)).toBe(false);
+});
+
+test("describeCounts: non-zero states in state order, in words; empty says so", () => {
+  expect(describeCounts({ ...zero, recorded: 1, open: 2, retired: 3 })).toBe(
+    "2 open, 3 retired, 1 recorded",
+  );
+  expect(describeCounts(zero)).toBe("empty");
 });
 
 test("isChanged: newer than last seen badges; seen-or-older doesn't", () => {

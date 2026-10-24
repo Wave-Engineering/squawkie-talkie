@@ -359,7 +359,17 @@ export async function renderList(
   title.textContent = detail.name;
   const counts = document.createElement("span");
   counts.className = "detail__counts mono";
-  header.append(title, counts);
+  // Rows changed since this browser last opened the list (#145), counted here.
+  const changedIds = new Set<number>();
+  const changedBadge = document.createElement("span");
+  changedBadge.className = "detail__changed mono";
+  changedBadge.title = "Changed since this list was last opened here";
+  const paintChanged = (): void => {
+    changedBadge.textContent = `●${changedIds.size} changed`;
+    changedBadge.hidden = changedIds.size === 0;
+  };
+  paintChanged();
+  header.append(title, counts, changedBadge);
   const updateCounts = (): void =>
     renderCounts(counts, countByState(model.values()));
 
@@ -643,6 +653,7 @@ export async function renderList(
 
     updateSquawk(squawkId, { state: newState }, initials)
       .then((updated) => {
+        markSeen(id, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         updateCounts();
       })
@@ -683,6 +694,7 @@ export async function renderList(
     }
     model.delete(squawkId);
     settleInTimes.delete(squawkId);
+    if (changedIds.delete(squawkId)) paintChanged();
     if (focusedSquawkId === squawkId) {
       focusedSquawkId = null;
     }
@@ -892,20 +904,14 @@ export async function renderList(
   // Changed since this browser last opened the list (#145): those rows are marked
   // and the header counts them, until the next load. Then the list counts as seen.
   const lastSeen = readLastSeen();
-  const changedIds = changedSquawkIds(
+  for (const changedId of changedSquawkIds(
     detail.squawks,
     lastSeen === null ? null : lastSeen[String(id)],
-  );
-  for (const changedId of changedIds) {
+  )) {
+    changedIds.add(changedId);
     rowHandles.get(changedId)?.el.classList.add("squawk-row--changed");
   }
-  if (changedIds.length > 0) {
-    const changed = document.createElement("span");
-    changed.className = "detail__changed mono";
-    changed.textContent = `●${changedIds.length} changed`;
-    changed.title = "Changed since this list was last opened here";
-    header.append(changed);
-  }
+  paintChanged();
   markSeen(id, detail.last_activity);
 
   // --- Mode indicator bar (vim-style footer) ---
@@ -1213,6 +1219,7 @@ function buildSquawkRow(
     updateSquawk(squawk.id, { text }, initials)
       .then((updated) => {
         lastSaved = text;
+        markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
       })
       .catch((err) => console.error("autosave failed", err));
@@ -1244,6 +1251,7 @@ function buildSquawkRow(
     onChange();
     updateSquawk(squawk.id, { state }, initials)
       .then((updated) => {
+        markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         onChange();
       })
