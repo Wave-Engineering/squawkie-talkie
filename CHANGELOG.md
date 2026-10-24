@@ -7,6 +7,16 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Changed
+- **A squawk's text wraps, and a tap expands it** (#146). An idle row used to show its text
+  in a one-line field, so a squawk longer than the row was cut off with no way to read the
+  rest. Now:
+  - The text wraps, clamped to 3 lines, with a `…more` cue only when some is hidden.
+  - A click or tap shows all of it in place, and a second one clamps it again.
+  - The row focused in nav mode shows all of it.
+  - Editing is unchanged: the field returns in edit mode. On a phone, a tap on an idle row
+    raises no keyboard.
+
 ## [0.10.0] — 2026-10-24 — reserved list names
 
 ### Added
