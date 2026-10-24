@@ -12,6 +12,12 @@ on:
         description: "Tag to build & publish to GHCR (e.g. v0.6.0)"
         required: true
 
+# Least-privilege default (the repo's own default is write): test, e2e and docker push
+# nothing. publish, mirror and release-notes each grant themselves what they need, and
+# release-notes is the only job with contents: write.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
