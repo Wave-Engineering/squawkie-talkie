@@ -16,6 +16,8 @@ const {
   listSquawks,
   migrateSquawkImages,
   migrateSquawkStates,
+  listListsWithStats,
+  getListWithStats,
 } = await import("../src/server/db.ts");
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -284,4 +286,71 @@ test("migrateSquawkStates is a no-op on a current or empty DB", () => {
   expect(
     fresh.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE name = 'squawks'").get(),
   ).toEqual({ n: 0 });
+});
+
+// --- list stats (#145) ---------------------------------------------------------
+
+test("list stats count every state, zero-filled, for mixed and empty lists", () => {
+  const mixed = createList("Stats mixed");
+  const a = createSquawk(mixed.id, "a", "BJ");
+  const b = createSquawk(mixed.id, "b", "BJ");
+  createSquawk(mixed.id, "c", "BJ");
+  updateSquawk(a.id, { state: "retired" });
+  updateSquawk(b.id, { state: "confirmed" });
+  const empty = createList("Stats empty");
+
+  const byId = new Map(listListsWithStats().map((l) => [l.id, l]));
+  expect(byId.get(mixed.id)?.counts).toEqual({
+    open: 1,
+    confirmed: 1,
+    rejected: 0,
+    retired: 1,
+    recorded: 0,
+  });
+  expect(byId.get(empty.id)?.counts).toEqual({
+    open: 0,
+    confirmed: 0,
+    rejected: 0,
+    retired: 0,
+    recorded: 0,
+  });
+  expect(byId.get(empty.id)?.last_activity).toBe(empty.created_at);
+  // Every list is there once, oldest first, with its own fields intact.
+  const ids = listListsWithStats().map((l) => l.id);
+  expect(ids).toEqual(listLists().map((l) => l.id));
+  expect(byId.get(mixed.id)?.name).toBe("Stats mixed");
+});
+
+test("list stats for every list come from a single query", () => {
+  createList("Stats q1");
+  createList("Stats q2");
+  const db = getDb();
+  const original = db.query.bind(db);
+  let calls = 0;
+  db.query = ((sql: string) => {
+    calls += 1;
+    return original(sql);
+  }) as typeof db.query;
+  try {
+    expect(listListsWithStats().length).toBeGreaterThanOrEqual(2);
+  } finally {
+    db.query = original;
+  }
+  expect(calls).toBe(1);
+});
+
+test("last_activity moves on a create and on an update", async () => {
+  const list = createList("Stats activity");
+  expect(getListWithStats(list.id)?.last_activity).toBe(list.created_at);
+
+  await sleep(5);
+  const sq = createSquawk(list.id, "first", "BJ");
+  expect(getListWithStats(list.id)?.last_activity).toBe(sq.created_at);
+
+  await sleep(5);
+  const updated = updateSquawk(sq.id, { text: "edited" });
+  expect(getListWithStats(list.id)?.last_activity).toBe(updated.updated_at);
+  expect(updated.updated_at > sq.created_at).toBe(true);
+
+  expect(getListWithStats(999999)).toBeNull();
 });

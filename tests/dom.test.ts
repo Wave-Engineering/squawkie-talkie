@@ -40,7 +40,26 @@ function listPayload() {
     id: 1,
     name: "Regression",
     created_at: "2026-01-01T00:00:00.000Z",
+    counts: { open: 2, confirmed: 0, rejected: 0, retired: 0, recorded: 0 },
+    last_activity: "2026-01-01T00:00:00.000Z",
     squawks: [mkSquawk(10, 2), mkSquawk(11, 1)],
+  };
+}
+
+/** A row of `GET /api/lists`, with its stats (#145). */
+function mkListRow(
+  id: number,
+  name: string,
+  counts: Partial<Record<"open" | "confirmed" | "rejected" | "retired" | "recorded", number>> = {},
+  times: { created_at?: string; last_activity?: string } = {},
+) {
+  const created_at = times.created_at ?? "2026-01-01T00:00:00.000Z";
+  return {
+    id,
+    name,
+    created_at,
+    counts: { open: 0, confirmed: 0, rejected: 0, retired: 0, recorded: 0, ...counts },
+    last_activity: times.last_activity ?? created_at,
   };
 }
 
@@ -69,6 +88,7 @@ beforeEach(() => {
   try {
     localStorage.setItem("st.coach.detail", "1");
     localStorage.setItem("st.coach.lists", "1");
+    localStorage.removeItem("sqtk.lastSeen"); // #145: each test starts unseen
   } catch {
     /* no localStorage in this environment — ignore */
   }
@@ -520,8 +540,8 @@ test("each list row has an Export button that downloads the list as JSON", async
     const url = String(input);
     fetched.push(url);
     const body = url.endsWith("/api/lists")
-      ? JSON.stringify([{ id: 7, name: "Sprint 7", created_at: "t" }])
-      : JSON.stringify({ id: 7, name: "Sprint 7", created_at: "t", squawks: [] });
+      ? JSON.stringify([mkListRow(7, "Sprint 7")])
+      : JSON.stringify({ ...mkListRow(7, "Sprint 7"), squawks: [] });
     return Promise.resolve(
       new Response(body, { headers: { "content-type": "application/json" } }),
     );
@@ -704,10 +724,159 @@ test("a remote text update refreshes an unfocused row's display block", async ()
   expect(display.textContent).toBe("remote text");
 });
 
+// --- #145: list counts, settled strike, changed badge -------------------------
+
+/** Let the lists page's initial `getLists()` resolve and render. */
+const settle = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+test("each list row shows its non-zero counts, and a settled list is struck", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  stubLists([
+    mkListRow(1, "Open work", { open: 2, retired: 1 }),
+    mkListRow(2, "All settled", { confirmed: 1, recorded: 2 }),
+    mkListRow(3, "Empty"),
+  ]);
+  const container = document.createElement("div");
+  document.body.append(container);
+  renderLists(container);
+  await settle();
+
+  const row = (id: number) => container.querySelector<HTMLElement>(`[data-list-id="${id}"]`)!;
+  expect(row(1).querySelector(".list-row__counts")!.textContent).toBe("○2◌1");
+  expect(row(2).querySelector(".list-row__counts")!.textContent).toBe("✓1↗2");
+  expect(row(3).querySelector(".list-row__counts")!.textContent).toBe("");
+  expect(row(1).classList.contains("list-row--settled")).toBe(false);
+  expect(row(2).classList.contains("list-row--settled")).toBe(true);
+  expect(row(3).classList.contains("list-row--settled")).toBe(false);
+});
+
+test("a list changed since it was last opened is badged; opening it clears the badge", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  const { renderList } = await import("../src/client/detail.ts");
+  const later = "2026-01-02T00:00:00.000Z";
+  localStorage.setItem("sqtk.lastSeen", JSON.stringify({ "1": "2026-01-01T00:00:00.000Z" }));
+
+  stubLists([mkListRow(1, "Regression", { open: 2 }, { last_activity: later })]);
+  const before = document.createElement("div");
+  document.body.append(before);
+  renderLists(before);
+  await settle();
+  expect(before.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(false);
+
+  // Open it: the item page records the list's last_activity as seen.
+  stubFetch();
+  const detailEl = document.createElement("div");
+  document.body.append(detailEl);
+  await renderList(detailEl, "1");
+  expect(JSON.parse(localStorage.getItem("sqtk.lastSeen")!)["1"]).toBe(
+    listPayload().last_activity,
+  );
+
+  // The list's own last_activity is now what was seen: no badge.
+  stubLists([mkListRow(1, "Regression", { open: 2 }, { last_activity: listPayload().last_activity })]);
+  const after = document.createElement("div");
+  document.body.append(after);
+  renderLists(after);
+  await settle();
+  expect(after.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(true);
+});
+
+test("the item page marks rows changed since the last open and counts them", async () => {
+  const { renderList } = await import("../src/client/detail.ts");
+  // Row 10 changed after the stored value; row 11 didn't.
+  const payload = listPayload();
+  payload.squawks[0]!.updated_at = "2026-01-03T00:00:00.000Z";
+  payload.last_activity = "2026-01-03T00:00:00.000Z";
+  localStorage.setItem("sqtk.lastSeen", JSON.stringify({ "1": "2026-01-02T00:00:00.000Z" }));
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify(payload), {
+      headers: { "content-type": "application/json" },
+    })) as unknown as typeof fetch;
+
+  const container = document.createElement("div");
+  document.body.append(container);
+  await renderList(container, "1");
+
+  const row = (id: number) => container.querySelector<HTMLElement>(`[data-squawk-id="${id}"]`)!;
+  expect(row(10).classList.contains("squawk-row--changed")).toBe(true);
+  expect(row(11).classList.contains("squawk-row--changed")).toBe(false);
+  expect(container.querySelector(".detail__changed")!.textContent).toBe("●1 changed");
+  expect(JSON.parse(localStorage.getItem("sqtk.lastSeen")!)["1"]).toBe(payload.last_activity);
+});
+
+test("with localStorage throwing, both pages render with no badge and no error", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  const { renderList } = await import("../src/client/detail.ts");
+  const errors: unknown[] = [];
+  const origError = console.error;
+  console.error = (...args: unknown[]) => errors.push(args);
+  // Storage blocked outright, as in a sandboxed frame: touching it throws.
+  const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    get() {
+      throw new Error("SecurityError: storage is blocked");
+    },
+  });
+  try {
+    stubLists([mkListRow(1, "Regression", { open: 2 }, { last_activity: "2026-01-02T00:00:00.000Z" })]);
+    const lists = document.createElement("div");
+    document.body.append(lists);
+    renderLists(lists);
+    await settle();
+    expect(lists.querySelector(".list-row__counts")!.textContent).toBe("○2");
+    expect(lists.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(true);
+
+    stubFetch();
+    const detailEl = document.createElement("div");
+    document.body.append(detailEl);
+    await renderList(detailEl, "1");
+    expect(detailEl.querySelectorAll("[data-squawk-id]")).toHaveLength(2);
+    expect(detailEl.querySelector(".detail__changed")).toBeNull();
+    expect(detailEl.querySelectorAll(".squawk-row--changed")).toHaveLength(0);
+  } finally {
+    if (descriptor) Object.defineProperty(window, "localStorage", descriptor);
+    else delete (window as { localStorage?: Storage }).localStorage;
+    // Unreadable seen-flags read as unseen, so the lists tour ran: end it.
+    const { endActiveTour } = await import("../src/client/coachmarks.ts");
+    endActiveTour();
+    console.error = origError;
+  }
+  expect(errors).toEqual([]);
+});
+
+test("a squawk event on the lists page refreshes counts, strike and badge in place", async () => {
+  const { renderLists } = await import("../src/client/lists.ts");
+  const { applyEvent, activeView } = await import("../src/client/realtime.ts");
+  localStorage.setItem("sqtk.lastSeen", JSON.stringify({ "1": "2026-01-01T00:00:00.000Z" }));
+  stubLists([mkListRow(1, "Regression", { retired: 1 })]);
+  const container = document.createElement("div");
+  document.body.append(container);
+  renderLists(container);
+  await settle();
+  const row = container.querySelector<HTMLElement>('[data-list-id="1"]')!;
+  expect(row.classList.contains("list-row--settled")).toBe(true);
+  expect(row.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(true);
+
+  // Another viewer adds a squawk: the next fetch carries it.
+  stubLists([
+    mkListRow(1, "Regression", { open: 1, retired: 1 }, { last_activity: "2026-01-02T00:00:00.000Z" }),
+  ]);
+  applyEvent(
+    { type: "squawk.created", squawk: { ...mkSquawk(12, 3), list_id: 1 } },
+    { view: activeView(), activeElement: null },
+  );
+  await settle(200);
+  expect(container.querySelector('[data-list-id="1"]')).toBe(row); // same element, patched
+  expect(row.querySelector(".list-row__counts")!.textContent).toBe("○1◌1");
+  expect(row.classList.contains("list-row--settled")).toBe(false);
+  expect(row.querySelector<HTMLElement>(".list-row__changed")!.hidden).toBe(false);
+});
+
 // --- Onboarding coach tour (Epic #69, #72): seen-flag gate ------------------
 
 /** Stub fetch so `GET /api/lists` returns the given rows (default: one list). */
-function stubLists(lists = [{ id: 7, name: "Sprint 7", created_at: "t" }]): void {
+function stubLists(lists: unknown[] = [mkListRow(7, "Sprint 7")]): void {
   globalThis.fetch = (async () =>
     new Response(JSON.stringify(lists), {
       headers: { "content-type": "application/json" },

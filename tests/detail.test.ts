@@ -10,6 +10,26 @@ import {
   overflowsClamp,
   stateClass,
 } from "../src/client/detail.ts";
+import { changedSquawkIds } from "../src/client/counts.ts";
+
+// --- changedSquawkIds (#145) ---------------------------------------------------
+
+test("changedSquawkIds: rows created or updated after last seen", () => {
+  const t = (d: number) => `2026-01-0${d}T00:00:00.000Z`;
+  const squawks = [
+    { id: 1, created_at: t(1), updated_at: t(1) }, // before
+    { id: 2, created_at: t(1), updated_at: t(3) }, // updated after
+    { id: 3, created_at: t(3), updated_at: t(3) }, // created after
+    { id: 4, created_at: t(2), updated_at: t(2) }, // exactly at last seen
+  ];
+  expect(changedSquawkIds(squawks, t(2))).toEqual([2, 3]);
+});
+
+test("changedSquawkIds: nothing marked when never opened or storage is out", () => {
+  const squawks = [{ id: 1, created_at: "2026-01-05T00:00:00.000Z", updated_at: "2026-01-05T00:00:00.000Z" }];
+  expect(changedSquawkIds(squawks, undefined)).toEqual([]);
+  expect(changedSquawkIds(squawks, null)).toEqual([]);
+});
 
 // --- stateClass --------------------------------------------------------------
 

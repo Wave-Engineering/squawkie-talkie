@@ -20,7 +20,7 @@
  * the local value unconditionally.
  */
 
-import type { List, Squawk } from "../server/types.ts";
+import type { ListWithStats, Squawk } from "../server/types.ts";
 
 // ---------------------------------------------------------------------------
 // Event shapes (mirror the broadcasts emitted by src/server/sse.ts)
@@ -28,7 +28,7 @@ import type { List, Squawk } from "../server/types.ts";
 
 /** A realtime event as broadcast by the server over `/api/stream`. */
 export type RealtimeEvent =
-  | { type: "list.created"; list: List }
+  | { type: "list.created"; list: ListWithStats }
   | { type: "list.deleted"; id: number }
   | { type: "squawk.created"; squawk: Squawk }
   | { type: "squawk.updated"; squawk: Squawk }
@@ -44,9 +44,16 @@ export type RealtimeEvent =
 export interface ListsViewBinding {
   kind: "lists";
   /** Add the list's row if it is not already shown. */
-  upsertList(list: List): void;
+  upsertList(list: ListWithStats): void;
   /** Remove the list's row if present. */
   removeList(id: number): void;
+  /**
+   * A squawk on some list was created, updated or deleted, so the rows' counts and
+   * badges may be stale (#145). The events can't say what changed in a count (an
+   * update doesn't carry the old state; a delete carries only an id), so the view
+   * re-fetches.
+   */
+  squawkChanged?(): void;
   /**
    * Re-fetch and reconcile this view after an SSE reconnect. SSE has no replay,
    * so events missed while offline are only recoverable by re-fetching. Idempotent.
@@ -191,6 +198,7 @@ export function applyEvent(event: RealtimeEvent, ctx: ApplyContext): void {
       return;
     }
     case "squawk.created": {
+      if (view?.kind === "lists") view.squawkChanged?.();
       if (view?.kind === "detail" && isSquawkEvent(event)) {
         if (view.listId === event.squawk.list_id) {
           view.upsertSquawk(event.squawk);
@@ -199,6 +207,7 @@ export function applyEvent(event: RealtimeEvent, ctx: ApplyContext): void {
       return;
     }
     case "squawk.updated": {
+      if (view?.kind === "lists") view.squawkChanged?.();
       if (view?.kind === "detail" && isSquawkEvent(event)) {
         if (view.listId === event.squawk.list_id) {
           const applyToInput = shouldApplyToInput(
@@ -211,6 +220,7 @@ export function applyEvent(event: RealtimeEvent, ctx: ApplyContext): void {
       return;
     }
     case "squawk.deleted": {
+      if (view?.kind === "lists") view.squawkChanged?.();
       if (view?.kind === "detail" && typeof event.id === "number") {
         view.removeSquawk(event.id);
       }
@@ -223,7 +233,9 @@ export function applyEvent(event: RealtimeEvent, ctx: ApplyContext): void {
 }
 
 /** Narrow a catch-all event to one carrying a `list` payload. */
-function isListEvent(event: RealtimeEvent): event is { type: string; list: List } {
+function isListEvent(
+  event: RealtimeEvent,
+): event is { type: string; list: ListWithStats } {
   return "list" in event && event.list != null;
 }
 

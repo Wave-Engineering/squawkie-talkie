@@ -103,6 +103,36 @@ test("list responses do not expose the internal next_seq counter", async () => {
   expect("next_seq" in detail).toBe(false);
 });
 
+test("list responses carry counts for every state and last_activity (#145)", async () => {
+  const created = await createList("Stats wire");
+  // A fresh list, from POST, is zero-filled and last active when it was made.
+  expect(created.counts).toEqual({ open: 0, confirmed: 0, rejected: 0, retired: 0, recorded: 0 });
+  expect(created.last_activity).toBe(created.created_at);
+
+  await new Promise((r) => setTimeout(r, 5)); // so the squawks are strictly later
+  const sqRes = await routeRequest(
+    req("POST", `/api/lists/${created.id}/squawks`, { text: "one", initials: "BJ" }),
+  );
+  const sq = await sqRes.json();
+  await routeRequest(req("PATCH", `/api/squawks/${sq.id}`, { state: "recorded" }));
+  await routeRequest(
+    req("POST", `/api/lists/${created.id}/squawks`, { text: "two", initials: "BJ" }),
+  );
+
+  const row = (await (await routeRequest(req("GET", "/api/lists"))).json()).find(
+    (l: { id: number }) => l.id === created.id,
+  );
+  expect(row.counts).toEqual({ open: 1, confirmed: 0, rejected: 0, retired: 0, recorded: 1 });
+  expect(typeof row.last_activity).toBe("string");
+  expect(row.last_activity > created.created_at).toBe(true);
+  expect("next_seq" in row).toBe(false);
+
+  const detail = await (await routeRequest(req("GET", `/api/lists/${created.id}`))).json();
+  expect(detail.last_activity).toBe(row.last_activity);
+  expect(detail.counts).toEqual(row.counts);
+  expect(detail.squawks).toHaveLength(2);
+});
+
 // --- squawks -----------------------------------------------------------------
 
 test("POST squawk returns 201 + body", async () => {

@@ -7,6 +7,21 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **The lists page says what is in each list** (#145). It used to show only names, so a reader
+  had to open a list to learn whether anything in it was still open. Now each row shows:
+  - the list's glyph counts, the same `○5 ✓2` its own header shows;
+  - its name struck through once it has squawks and none is open;
+  - a `●` when it changed since this browser last opened it.
+
+  Opening a list clears its dot. The list's own header then counts the squawks that changed
+  since the last open (`●2 changed`), and those rows are marked until the next load. All of it
+  updates live, and with `localStorage` unavailable the pages show no dots and raise no errors.
+  A list this browser has never opened is dotted once it has any squawk activity.
+- **`GET /api/lists` and `GET /api/lists/:id` carry `counts` and `last_activity`** (#145).
+  `counts` has one key per state, and every list's stats come from one query. A squawk's
+  deletion does not move `last_activity`. `sqtk` ignores both fields.
+
 ### Changed
 - **A squawk's text wraps, and a tap expands it** (#146). An idle row used to show its text
   in a one-line field, so a squawk longer than the row was cut off with no way to read the

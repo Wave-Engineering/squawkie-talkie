@@ -11,10 +11,10 @@
  * coupling and the client bundle never pulls in server code.
  */
 import { MAX_IMAGES_PER_SQUAWK } from "../server/types.ts";
-import type { List, Squawk, SquawkState } from "../server/types.ts";
+import type { ListWithStats, Squawk, SquawkState } from "../server/types.ts";
 
 /** A list plus its squawks, as returned by `GET /api/lists/:id`. */
-export interface ListDetail extends List {
+export interface ListDetail extends ListWithStats {
   squawks: Squawk[];
 }
 
@@ -65,13 +65,13 @@ async function errorDetail(res: Response): Promise<string> {
 }
 
 /** GET /api/lists — all lists, oldest first. */
-export function getLists(): Promise<List[]> {
-  return request<List[]>("/api/lists");
+export function getLists(): Promise<ListWithStats[]> {
+  return request<ListWithStats[]>("/api/lists");
 }
 
 /** POST /api/lists — create a list and return the persisted row. */
-export function createList(name: string): Promise<List> {
-  return request<List>("/api/lists", {
+export function createList(name: string): Promise<ListWithStats> {
+  return request<ListWithStats>("/api/lists", {
     method: "POST",
     body: JSON.stringify({ name }),
   });

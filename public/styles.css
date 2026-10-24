@@ -280,24 +280,38 @@ body {
   color: rgba(230, 237, 243, 0.45);
 }
 
-.detail__counts .count {
+/* The tallies, in the list's header and on each row of the lists page (#145). */
+.count {
   font-weight: 700;
   padding: 0 0.35rem;
 }
-.detail__counts .count--open {
+.count--open {
   color: var(--state-open);
 }
-.detail__counts .count--confirmed {
+.count--confirmed {
   color: var(--state-confirmed);
 }
-.detail__counts .count--rejected {
+.count--rejected {
   color: var(--state-rejected);
 }
-.detail__counts .count--retired {
+.count--retired {
   color: var(--state-retired);
 }
-.detail__counts .count--recorded {
+.count--recorded {
   color: var(--state-recorded);
+}
+
+/* Changed since this browser last opened the list (#145). */
+.detail__changed {
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+.squawk-row--changed .squawk-row__seq::before {
+  content: "●";
+  margin-right: 0.25rem;
+  font-size: 0.6rem;
+  vertical-align: middle;
+  color: var(--accent);
 }
 
 .detail__stack {
@@ -975,6 +989,25 @@ body {
   background: none;
   border: none;
   cursor: pointer;
+}
+
+/* What is in the list (#145): its counts, struck through once nothing is open,
+   and a dot when it changed since this browser last opened it. */
+.list-row__counts {
+  flex: none;
+  font-size: 0.9rem;
+}
+.list-row--settled .list-row__open {
+  text-decoration: line-through;
+  color: rgba(230, 237, 243, 0.55);
+}
+.list-row__changed {
+  flex: none;
+  font-size: 0.7rem;
+  color: var(--accent);
+}
+.list-row__changed[hidden] {
+  display: none;
 }
 
 .list-row__open:hover {

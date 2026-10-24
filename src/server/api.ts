@@ -8,7 +8,7 @@
  * (body parsing for POST/PATCH is async).
  *
  * Routes:
- *   GET    /api/lists                 -> listLists()                    (200)
+ *   GET    /api/lists                 -> listListsWithStats()           (200)
  *   POST   /api/lists                 -> createList(name)               (201)
  *   GET    /api/lists/:id             -> { ...getList, squawks }        (200/404)
  *   DELETE /api/lists/:id             -> { ok: true }                   (200/404)
@@ -33,25 +33,33 @@ import {
   getSquawk,
   getSquawkImageById,
   ImageLimitError,
-  listLists,
+  getListWithStats,
+  listListsWithStats,
   listSquawkImageIds,
   listSquawks,
   updateSquawk,
 } from "./db.ts";
 import { broadcast } from "./sse.ts";
 import { MAX_IMAGES_PER_SQUAWK, SQUAWK_STATES } from "./types.ts";
-import type { List, SquawkState } from "./types.ts";
+import type { ListWithStats, SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
 const VALID_STATES: ReadonlySet<string> = new Set<string>(SQUAWK_STATES);
 
 /** A list as exposed over the API — without the internal `next_seq` counter. */
-export type PublicList = Omit<List, "next_seq">;
+export type PublicList = Omit<ListWithStats, "next_seq">;
 
 /** Drop the internal `next_seq` counter so it never leaks to clients. */
-function publicList(list: List): PublicList {
+function publicList(list: ListWithStats): PublicList {
   const { next_seq: _next_seq, ...rest } = list;
   return rest;
+}
+
+/** The public form of a list that is known to exist, with its stats (#145). */
+function publicListById(id: number): PublicList {
+  const list = getListWithStats(id);
+  if (!list) throw new Error(`publicListById: list ${id} not found`);
+  return publicList(list);
 }
 
 /** Centralized JSON response helper. */
@@ -111,7 +119,7 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
   // /api/lists
   if (segments.length === 2 && segments[1] === "lists") {
     if (method === "GET") {
-      return json(listLists().map(publicList));
+      return json(listListsWithStats().map(publicList));
     }
     if (method === "POST") {
       return createListRoute(req);
@@ -137,7 +145,7 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
     if (!list) {
       return json({ error: "list not found" }, 404);
     }
-    return json({ ...publicList(list), squawks: listSquawks(list.id) });
+    return json({ ...publicListById(list.id), squawks: listSquawks(list.id) });
   }
 
   // /api/lists/:id
@@ -151,7 +159,7 @@ async function routeApi(req: Request, url: URL): Promise<Response> {
       if (!list) {
         return json({ error: "list not found" }, 404);
       }
-      return json({ ...publicList(list), squawks: listSquawks(id) });
+      return json({ ...publicListById(id), squawks: listSquawks(id) });
     }
     if (method === "DELETE") {
       if (deleteList(id)) {
@@ -256,7 +264,7 @@ async function createListRoute(req: Request): Promise<Response> {
   if (!name) {
     return json({ error: "name is required" }, 400);
   }
-  const list = publicList(createList(name));
+  const list = publicListById(createList(name).id);
   broadcast({ type: "list.created", list });
   return json(list, 201);
 }
@@ -316,7 +324,7 @@ async function quickAddSquawkRoute(req: Request): Promise<Response> {
   if (!list) {
     list = createList(listName);
     listCreated = true;
-    broadcast({ type: "list.created", list: publicList(list) });
+    broadcast({ type: "list.created", list: publicListById(list.id) });
   }
 
   const squawk = createSquawk(list.id, text, initials);

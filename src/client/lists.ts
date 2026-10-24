@@ -11,8 +11,9 @@
  * create appends one row, delete removes one row, nothing else repaints. That
  * same model is the seam realtime patching plugs into in #9.
  */
-import type { List } from "../server/types.ts";
+import type { List, ListWithStats } from "../server/types.ts";
 import { createList, deleteList, getList, getLists } from "./api.ts";
+import { isChanged, isSettled, readLastSeen, renderCounts } from "./counts.ts";
 import {
   type CoachStep,
   endActiveTour,
@@ -92,10 +93,15 @@ export function deleteReducer(
 // View
 // ---------------------------------------------------------------------------
 
+/** How long the lists page waits after a squawk event before re-fetching stats. */
+const STATS_REFRESH_MS = 150;
+
 /** Render the Lists screen into `container`. Called by the router on `#/`. */
 export function renderLists(container: HTMLElement): void {
   // Surgical-render model: the source of truth for which rows exist.
-  const model: List[] = [];
+  const model: ListWithStats[] = [];
+  // Each row's in-place repaint of its counts, strike and badge (#145).
+  const statsPainters = new Map<number, (list: ListWithStats) => void>();
 
   const heading = document.createElement("h2");
   heading.className = "lists__heading";
@@ -130,7 +136,7 @@ export function renderLists(container: HTMLElement): void {
     empty.hidden = model.length > 0;
   }
 
-  function addList(list: List): void {
+  function addList(list: ListWithStats): void {
     if (model.some((l) => l.id === list.id)) {
       return; // already shown — keep create idempotent (realtime + initial load)
     }
@@ -155,6 +161,7 @@ export function renderLists(container: HTMLElement): void {
     if (index >= 0) {
       model.splice(index, 1);
     }
+    statsPainters.delete(id);
     rowEl.remove();
     syncEmpty();
     if (index >= 0) {
@@ -229,7 +236,7 @@ export function renderLists(container: HTMLElement): void {
 
   // --- a single list row ---------------------------------------------------
 
-  function buildRow(list: List): HTMLLIElement {
+  function buildRow(list: ListWithStats): HTMLLIElement {
     const row = document.createElement("li");
     row.className = "list-row";
     row.dataset.listId = String(list.id);
@@ -319,8 +326,50 @@ export function renderLists(container: HTMLElement): void {
     }
 
     paint();
-    row.append(open, controls);
+
+    // What is in the list (#145): its counts, struck through when settled, and a
+    // badge when it changed since this browser last opened it.
+    const counts = document.createElement("span");
+    counts.className = "list-row__counts mono";
+    const changed = document.createElement("span");
+    changed.className = "list-row__changed mono";
+    changed.textContent = "●";
+    changed.title = "Changed since you last opened it";
+    function paintStats(fresh: ListWithStats): void {
+      renderCounts(counts, fresh.counts);
+      row.classList.toggle("list-row--settled", isSettled(fresh.counts));
+      const seen = readLastSeen();
+      changed.hidden = !isChanged(fresh, seen === null ? null : seen[String(fresh.id)]);
+    }
+    paintStats(list);
+    statsPainters.set(list.id, paintStats);
+
+    row.append(changed, open, counts, controls);
     return row;
+  }
+
+  /** Re-fetch every list's stats and repaint the rows in place. */
+  async function refreshStats(): Promise<void> {
+    let fresh: ListWithStats[];
+    try {
+      fresh = await getLists();
+    } catch {
+      return; // keep what is shown; the indicator signals a lost connection
+    }
+    for (const l of fresh) {
+      const i = model.findIndex((m) => m.id === l.id);
+      if (i >= 0) model[i] = l;
+      statsPainters.get(l.id)?.(l);
+    }
+  }
+  // A burst of squawk events costs one fetch.
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  function scheduleRefresh(): void {
+    if (refreshTimer !== null) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => {
+      refreshTimer = null;
+      void refreshStats();
+    }, STATS_REFRESH_MS);
   }
 
   // --- Keyboard navigation (vim-style, matching detail view) ---------------
@@ -624,6 +673,7 @@ export function renderLists(container: HTMLElement): void {
   setActiveView({
     kind: "lists",
     upsertList: (list) => addList(list),
+    squawkChanged: () => scheduleRefresh(),
     removeList: (id) => {
       const row = rows.querySelector<HTMLElement>(`[data-list-id="${id}"]`);
       if (row) {
@@ -632,16 +682,18 @@ export function renderLists(container: HTMLElement): void {
     },
     // On reconnect: re-fetch and reconcile what changed while we were offline.
     resync: async () => {
-      let fresh: List[];
+      let fresh: ListWithStats[];
       try {
         fresh = await getLists();
       } catch {
         return; // leave rows as-is; the indicator already signals the problem
       }
       const freshIds = new Set(fresh.map((l) => l.id));
-      // Add lists created while offline (addList de-dupes anything already shown).
+      // Add lists created while offline (addList de-dupes anything already shown),
+      // and repaint the stats of the ones already shown.
       for (const l of fresh) {
         addList(l);
+        statsPainters.get(l.id)?.(l);
       }
       // Remove lists deleted while offline.
       for (const l of [...model]) {
