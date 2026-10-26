@@ -708,12 +708,15 @@ test("add refuses text split into several words and posts nothing; flags still g
 
 test("show, walk, new and rmlist refuse a name split into several words, changing nothing", async () => {
   for (const cmd of ["show", "walk", "new"]) {
-    const r = sqtk(cmd, "split", "list");
+    const r = sqtk(cmd, "never", "made");
     expect(r.code).not.toBe(0);
     expect(r.err).toContain(`${cmd}: 2 arguments where one <`);
     expect(r.err).toContain("as ONE argument");
   }
-  expect(await listNames()).not.toContain("split list");
+  // `new` used to create "never", the first word.
+  const made = await listNames();
+  expect(made).not.toContain("never");
+  expect(made).not.toContain("never made");
 
   // rmlist used to keep the LAST word: this deleted "gone".
   for (const name of ["keep", "gone"]) expect(sqtk("new", name).code).toBe(0);
