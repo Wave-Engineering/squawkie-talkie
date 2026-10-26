@@ -11,7 +11,7 @@
     "test:e2e": "bunx playwright test"
   },
   "devDependencies": {
-    "@happy-dom/global-registrator": "^20.10.6",
+    "@happy-dom/global-registrator": "^21.0.4",
     "@playwright/test": "^1.61.1",
     "bun-types": "latest",
     "typescript": "^5"
