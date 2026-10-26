@@ -673,3 +673,65 @@ test("set --text refuses to drop the trailing → answer; keeping it, or --force
   expect(forced.code).toBe(0);
   expect(forced.out).toContain("start over");
 });
+
+// --- #157: a split argument is refused, never silently dropped ------------------
+
+const listNames = async (): Promise<string[]> =>
+  ((await (await fetch(`${BASE}/api/lists`)).json()) as { name: string }[]).map((l) => l.name);
+
+test("add refuses text split into several words and posts nothing; flags still go anywhere", async () => {
+  expect(sqtk("add", "split", "one whole text", "--no-prefix").code).toBe(0); // #1
+  const recorded = mineOf().length;
+  // `sqtk add split 'the kiosk's answer to bob's question'`, as the shell splits it.
+  for (const args of [
+    ["split", "the kiosks", "answer", "to", "bobs question"],
+    ["split", "two", "words"],
+    ["--force", "split", "two", "--no-prefix", "words"],
+  ]) {
+    const r = sqtk("add", ...args);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain(`add: ${args.filter((a) => !a.startsWith("--")).length - 1} arguments after the list`);
+    expect(r.err).toContain("quote the text as ONE argument");
+  }
+  expect((await listByName("split")).squawks.length).toBe(1); // nothing posted
+  expect(mineOf().length).toBe(recorded); // nothing recorded
+
+  // Two positionals pass, with --no-prefix / --force before, between or after them.
+  expect(sqtk("add", "--no-prefix", "split", "flag before").code).toBe(0);
+  expect(sqtk("add", "split", "--force", "flag between").code).toBe(0);
+  expect(sqtk("add", "split", "one whole text", "--force", "--no-prefix").code).toBe(0); // a forced duplicate
+  const texts = (await listByName("split")).squawks.map((s) => s.text);
+  expect(texts).toContain("flag before");
+  expect(texts).toContain(`${P}flag between`);
+  expect(texts.filter((t) => t === "one whole text").length).toBe(2);
+});
+
+test("show, walk, new and rmlist refuse a name split into several words, changing nothing", async () => {
+  for (const cmd of ["show", "walk", "new"]) {
+    const r = sqtk(cmd, "never", "made");
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain(`${cmd}: 2 arguments where one <`);
+    expect(r.err).toContain("as ONE argument");
+  }
+  // `new` used to create "never", the first word.
+  const made = await listNames();
+  expect(made).not.toContain("never");
+  expect(made).not.toContain("never made");
+
+  // rmlist used to keep the LAST word: this deleted "gone".
+  for (const name of ["keep", "gone"]) expect(sqtk("new", name).code).toBe(0);
+  const rm = sqtk("rmlist", "keep", "gone", "--yes");
+  expect(rm.code).not.toBe(0);
+  expect(rm.err).toContain("rmlist: 2 arguments where one <name> goes");
+  const names = await listNames();
+  expect(names).toContain("keep");
+  expect(names).toContain("gone");
+});
+
+test("lists and mine refuse any argument", () => {
+  for (const cmd of ["lists", "mine"]) {
+    const r = sqtk(cmd, "extra");
+    expect(r.code).not.toBe(0);
+    expect(r.err).toContain(`usage: sqtk ${cmd} (it takes no arguments)`);
+  }
+});
