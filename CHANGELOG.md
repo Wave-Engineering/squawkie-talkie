@@ -7,6 +7,12 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Security
+- **happy-dom 20.10.6 → 21.0.4** (#159), the DOM test harness (a devDependency, through
+  `@happy-dom/global-registrator`). It fixes CVE-2026-115895 (HIGH), code execution through an
+  unvalidated ECMAScript Module import alias. 21.0's one breaking change turns CSS-file and
+  iframe loading off by default. The DOM tests load neither, so they are unchanged.
+
 ## [0.11.0] — 2026-10-24 — list counts & wrapping squawks
 
 ### Added
