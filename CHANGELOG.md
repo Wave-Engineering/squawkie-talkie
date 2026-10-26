@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-10-26 — sqtk refuses split arguments
+
 ### Fixed
 - **`sqtk` refuses a split argument instead of silently dropping words** (#157). A quoting slip
   such as `sqtk add needs 'the kiosk's answer to bob's question'` splits the text into four
