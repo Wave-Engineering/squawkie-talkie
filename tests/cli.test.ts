@@ -684,7 +684,7 @@ test("add refuses text split into several words and posts nothing; flags still g
   const recorded = mineOf().length;
   // `sqtk add split 'the kiosk's answer to bob's question'`, as the shell splits it.
   for (const args of [
-    ["split", "the kiosks", "answer to bob", "s question"],
+    ["split", "the kiosks", "answer", "to", "bobs question"],
     ["split", "two", "words"],
     ["--force", "split", "two", "--no-prefix", "words"],
   ]) {
