@@ -10,8 +10,8 @@ at `v0.3.0`**.
 ### Fixed
 - **`sqtk` refuses a split argument instead of silently dropping words** (#157). A quoting slip
   such as `sqtk add needs 'the kiosk's answer to bob's question'` splits the text into four
-  words, and `add` used to post only the first, `the kiosks`, with exit 0. Now each case exits non-zero, sends nothing and says to quote it as
-  one argument:
+  arguments, and `add` used to post only the first, `the kiosks`, with exit 0. Now each case
+  exits non-zero, sends nothing and says to quote it as one argument:
   - `add` given more than one word of text;
   - `show`, `walk`, `new` and `rmlist` given more than one name (`rmlist` kept the last one, so
     `rmlist keep gone --yes` deleted `gone`);
