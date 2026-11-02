@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-02 — sqtk marks the kind of an ask
+
 ### Added
 - **`sqtk add --kind K [--blocking]` marks what an ask on `bj:needs` is** (#163). The kind
   (`question` ❓, `action` 🔧, `approval` ✅, `blocker` ⛔; none given is 🔔) becomes the item's
