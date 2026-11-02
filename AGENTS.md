@@ -52,6 +52,13 @@ commits through the clone's `info/exclude`. That file's shape is a contract the 
 reads; it is documented in `sqtk`'s header. `set --text` refuses to drop a trailing `→ …`
 answer unless `--force`.
 
+An ask on `bj:needs` can say what it is: `sqtk add needs "Merge #12?" --kind approval --blocking`
+stores `✅❗ [<dev-name>·<repo>] Merge #12?`. Kinds are `question` ❓, `action` 🔧, `approval` ✅
+and `blocker` ⛔ (always blocking); none given is 🔔, and `--blocking` adds `❗`. `set <list> <seq>
+--kind K | --blocking | --no-blocking` rewrites only that leading marker. The flags are valid only
+on `bj:needs` (elsewhere they exit 2). The icon table is a contract with the kit's statusline; it
+is documented in `sqtk`'s header.
+
 Squawks are referenced by their per-list `#seq` (what `show`/`add` print) and **change state
 rather than being deleted** (`set --state retired`) — the one true-delete is the editor's `u`
 undo (invariant #6), which `sqtk` does not expose. Symlink `sqtk` onto

@@ -78,7 +78,8 @@ src/client/   app.ts (bootstrap) · lists.ts · detail.ts (editor) · realtime.t
 public/       index.html · styles.css · dist/ (built client, gitignored)
 tests/        unit + happy-dom DOM tests
 e2e/          Playwright specs
-sqtk          agent-facing client CLI (curl/jq wrapper over the JSON API)
+sqtk          agent-facing client CLI (curl/jq wrapper over the JSON API); asks on bj:needs
+              take `--kind question|action|approval|blocker` and `--blocking` (`set` also `--no-blocking`)
 docs/         architecture · requirements · deployment · testing
 ```
 

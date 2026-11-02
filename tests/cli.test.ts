@@ -396,7 +396,8 @@ test("needs resolves to bj:needs", async () => {
   const add = sqtk("add", "needs", "a need →");
   expect(add.code).toBe(0);
   expect(sqtkLines(add.err)).toEqual(['sqtk: "needs" resolved to "bj:needs"']);
-  expect((await listByName("bj:needs")).squawks.map((s) => s.text)).toContain(`${P}a need →`);
+  // bj:needs items lead with an ask marker (#163); no flags means the default 🔔.
+  expect((await listByName("bj:needs")).squawks.map((s) => s.text)).toContain(`🔔 ${P}a need →`);
   expect(sqtk("walk", "needs").out).toContain(`${P}a need →`);
 });
 
@@ -733,5 +734,175 @@ test("lists and mine refuse any argument", () => {
     const r = sqtk(cmd, "extra");
     expect(r.code).not.toBe(0);
     expect(r.err).toContain(`usage: sqtk ${cmd} (it takes no arguments)`);
+  }
+});
+
+// --- #163: ask markers on bj:needs ---------------------------------------------------
+
+const NEEDS = "bj:needs";
+let askN = 0;
+/** Add a uniquely-worded ask to bj:needs; returns its #seq and stored text. */
+async function askAdd(...flags: string[]): Promise<{ seq: number; text: string; code: number | null }> {
+  const word = `ask-${++askN}`;
+  const r = sqtk("add", NEEDS, word, ...flags);
+  const seq = Number(/squawked #(\d+)/.exec(r.out)?.[1] ?? 0);
+  return { seq, text: seq ? (await squawk(NEEDS, seq)).text : "", code: r.code };
+}
+const count = async (list: string) => ((await fetch(`${BASE}/api/lists/by-name?name=${list}`)).ok
+  ? (await listByName(list)).squawks.length
+  : 0);
+
+test("add on bj:needs stores the kind icon, and ❗ for a blocking non-blocker, ahead of the prefix", async () => {
+  const cases: [string[], string][] = [
+    [[], "🔔"],
+    [["--blocking"], "🔔❗"],
+    [["--kind", "question"], "❓"],
+    [["--kind", "question", "--blocking"], "❓❗"],
+    [["--kind", "action"], "🔧"],
+    [["--kind", "action", "--blocking"], "🔧❗"],
+    [["--kind", "approval"], "✅"],
+    [["--kind", "approval", "--blocking"], "✅❗"],
+  ];
+  for (const [flags, marker] of cases) {
+    const a = await askAdd(...flags);
+    expect(a.code).toBe(0);
+    expect(a.text).toBe(`${marker} ${P}ask-${askN}`);
+  }
+});
+
+test("--kind blocker stores the same text with or without --blocking", async () => {
+  const plain = await askAdd("--kind", "blocker");
+  expect(plain.text).toBe(`⛔ ${P}ask-${askN}`);
+  const blocking = await askAdd("--kind", "blocker", "--blocking");
+  expect(blocking.text).toBe(`⛔ ${P}ask-${askN}`);
+});
+
+test("--no-prefix still gets the marker", async () => {
+  const r = sqtk("add", NEEDS, "bare ask", "--no-prefix", "--kind", "action");
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("[open] 🔧 bare ask  (BOT)");
+});
+
+test("--kind/--blocking on another list, a bad kind, or a missing kind exit 2 and add nothing", async () => {
+  const before = await count("ask-elsewhere");
+  for (const flags of [["--kind", "question"], ["--blocking"], ["--kind", "approval", "--blocking"]]) {
+    const r = sqtk("add", "ask-elsewhere", "no markers here", ...flags);
+    expect(r.code).toBe(2);
+    expect(sqtkLines(r.err)).toHaveLength(1);
+    expect(r.err).toContain("apply only to bj:needs");
+  }
+  expect(await count("ask-elsewhere")).toBe(before);
+
+  const needs = await count(NEEDS);
+  for (const flags of [["--kind", "urgent"], ["--kind", ""], ["--kind", "Question"]]) {
+    const r = sqtk("add", NEEDS, "bad kind", ...flags);
+    expect(r.code).toBe(2);
+    expect(sqtkLines(r.err)).toHaveLength(1);
+    expect(r.err).toContain("unknown --kind");
+  }
+  const missing = sqtk("add", NEEDS, "no value", "--kind");
+  expect(missing.code).toBe(2);
+  expect(await count(NEEDS)).toBe(needs);
+  // A plain add elsewhere is unchanged: no icon.
+  expect(sqtk("add", "ask-elsewhere", "plain").out).toContain(`[open] ${P}plain  (BOT)`);
+});
+
+test("a repeated add and a set --text never double the prefix or the marker", async () => {
+  const a = sqtk("add", NEEDS, `✅❗ ${P}already marked and prefixed`);
+  expect(a.code).toBe(0);
+  expect(a.out).toContain(`[open] ✅❗ ${P}already marked and prefixed  (BOT)`);
+  const seq = Number(/squawked #(\d+)/.exec(a.out)?.[1]);
+  // The same text again is a duplicate, not a second prefix.
+  expect(sqtk("add", NEEDS, `✅❗ ${P}already marked and prefixed`).code).toBe(3);
+  // The marker-less form of it gets the default marker, then the prefix once.
+  const b = sqtk("add", NEEDS, `${P}prefixed only`);
+  expect(b.out).toContain(`[open] 🔔 ${P}prefixed only  (BOT)`);
+  // Flags replace the marker the text led with; the prefix stays single.
+  const c = sqtk("add", NEEDS, `✅❗ ${P}re-kinded`, "--kind", "question");
+  expect(c.out).toContain(`[open] ❓ ${P}re-kinded  (BOT)`);
+
+  // set --text keeps the item's marker, and a text that brings its own wins.
+  const keep = sqtk("set", NEEDS, String(seq), "--text", `${P}reworded`);
+  expect(keep.code).toBe(0);
+  expect((await squawk(NEEDS, seq)).text).toBe(`✅❗ ${P}reworded`);
+  const own = sqtk("set", NEEDS, String(seq), "--text", `🔧 ${P}own marker`);
+  expect(own.code).toBe(0);
+  expect((await squawk(NEEDS, seq)).text).toBe(`🔧 ${P}own marker`);
+});
+
+test("set --kind/--blocking/--no-blocking rewrite only the marker; a → answer survives byte for byte", async () => {
+  const a = await askAdd("--kind", "question");
+  const answered = `${a.text} → yes, ship it  →  and again`;
+  expect(sqtk("set", NEEDS, String(a.seq), "--text", answered, "--force").code).toBe(0);
+  const tail = ` ${P}ask-${askN} → yes, ship it  →  and again`;
+  const seqS = String(a.seq);
+  const textNow = async () => (await squawk(NEEDS, a.seq)).text;
+
+  expect(sqtk("set", NEEDS, seqS, "--blocking").code).toBe(0);
+  expect((await textNow()).startsWith("❓❗ ")).toBe(true);
+  expect(await textNow()).toContain(tail);
+  expect(sqtk("set", NEEDS, seqS, "--kind", "approval").code).toBe(0); // the blocking bit is kept
+  expect((await textNow()).startsWith("✅❗ [")).toBe(true);
+  expect(sqtk("set", NEEDS, seqS, "--no-blocking").code).toBe(0);
+  expect((await textNow()).startsWith("✅ [")).toBe(true);
+  expect(sqtk("set", NEEDS, seqS, "--kind", "blocker", "--blocking").code).toBe(0);
+  expect((await textNow()).startsWith("⛔ [")).toBe(true);
+  expect(sqtk("set", NEEDS, seqS, "--kind", "action", "--state", "open").code).toBe(0);
+  expect((await textNow()).startsWith("🔧 [")).toBe(true); // a blocker is not blocking once reclassified
+  expect(await textNow()).toBe(`🔧${tail}`);
+});
+
+test("set --kind/--blocking on another list, or with a bad kind, exit 2 and change nothing", async () => {
+  expect(sqtk("add", "ask-elsewhere", "set target").code).toBe(0);
+  const list = await listByName("ask-elsewhere");
+  const target = list.squawks[list.squawks.length - 1]!;
+  const r = sqtk("set", "ask-elsewhere", String(target.seq), "--kind", "question");
+  expect(r.code).toBe(2);
+  expect(r.err).toContain("apply only to bj:needs");
+  expect(sqtk("set", "ask-elsewhere", String(target.seq), "--no-blocking").code).toBe(2);
+  expect((await squawk("ask-elsewhere", target.seq)).text).toBe(target.text);
+
+  const a = await askAdd();
+  const bad = sqtk("set", NEEDS, String(a.seq), "--kind", "nope");
+  expect(bad.code).toBe(2);
+  expect(bad.err).toContain("unknown --kind");
+  expect((await squawk(NEEDS, a.seq)).text).toBe(a.text);
+});
+
+test("an item with no marker (an older client's) is untouched by show, walk and set --state", async () => {
+  const res = await fetch(`${BASE}/api/squawks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ list_name: NEEDS, text: `${P}legacy ask`, initials: "old" }),
+  });
+  const seq = ((await res.json()) as WireSquawk).seq;
+  expect(sqtk("show", NEEDS).out).toContain(`#${seq} ○ [open] ${P}legacy ask`);
+  expect(sqtk("walk", NEEDS).out).toContain(`#${seq}  ${P}legacy ask`);
+  expect(sqtk("set", NEEDS, String(seq), "--state", "retired").code).toBe(0);
+  expect((await squawk(NEEDS, seq)).text).toBe(`${P}legacy ask`);
+  // set --text on it adds no marker; only an explicit --kind/--blocking does.
+  expect(sqtk("set", NEEDS, String(seq), "--text", `${P}legacy reworded`).code).toBe(0);
+  expect((await squawk(NEEDS, seq)).text).toBe(`${P}legacy reworded`);
+  expect(sqtk("set", NEEDS, String(seq), "--kind", "question").code).toBe(0);
+  expect((await squawk(NEEDS, seq)).text).toBe(`❓ ${P}legacy reworded`);
+});
+
+test("two adds that differ only in kind are not duplicates", async () => {
+  expect(sqtk("add", NEEDS, "same words", "--kind", "question").code).toBe(0);
+  expect(sqtk("add", NEEDS, "same words", "--kind", "action").code).toBe(0);
+  expect(sqtk("add", NEEDS, "same words", "--kind", "action").code).toBe(3);
+});
+
+test("the ask-marker table is one ASK_ICONS array, and help documents the kinds and the contract (#163)", async () => {
+  const src = await Bun.file(CLI).text();
+  expect(src.match(/^ASK_ICONS=/gm)).toHaveLength(1);
+  for (const icon of ["❓", "🔧", "✅", "⛔", "🔔", "❗"]) {
+    // Every icon is a single code point, and appears in the table or the blocking mark.
+    expect([...icon]).toHaveLength(1);
+    expect(src).toContain(icon);
+  }
+  const usage = sqtk("help").err;
+  for (const s of ["--kind", "--blocking", "--no-blocking", "question ❓", "action 🔧", "approval ✅", "blocker ⛔", "🔔", "❗"]) {
+    expect(usage).toContain(s);
   }
 });
