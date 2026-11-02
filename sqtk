@@ -64,7 +64,9 @@
 #   add: --kind/--blocking build the marker; with neither, a marker already leading the text is
 #   kept, and a text with none gets 🔔. set --kind/--blocking/--no-blocking rewrite ONLY the
 #   marker (a "→ answer" is untouched); set --text keeps the item's marker unless the new text
-#   brings its own or --kind/--blocking is also given. An item with no marker (an older client's)
+#   brings its own or --kind/--blocking is also given. A blocker has no ❗ to carry over, so
+#   reclassifying one with --kind X (X not blocker) and no --blocking leaves X non-blocking.
+#   An item with no marker (an older client's)
 #   is left alone by everything but an explicit --kind/--blocking on it.
 #
 # set --text refuses a new text that drops the existing text's trailing "→ …" answer (the new
@@ -636,6 +638,7 @@ ask markers (bj:needs only; elsewhere --kind/--blocking exit 2): the text starts
   --kind question ❓ · action 🔧 · approval ✅ · blocker ⛔ (always blocking) · none 🔔
   --blocking adds ❗ after the icon (set --no-blocking removes it). set --kind/--blocking rewrite only
   the marker, so a "→ answer" survives; set --text keeps the item's marker unless the new text has one.
+  A blocker has no ❗ to carry over: set --kind X on one makes X non-blocking unless --blocking is given.
 env: SQUAWK_URL (REQUIRED — e.g. http://localhost:7700) · SQUAWK_INITIALS (else from agent identity)
 squawks are referenced by their per-list #seq (what show/add print), and change state, never delete.
 states: ○ open · ✓ confirmed · ✗ rejected · ◌ retired · ↗ recorded

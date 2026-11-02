@@ -896,11 +896,16 @@ test("two adds that differ only in kind are not duplicates", async () => {
 test("the ask-marker table is one ASK_ICONS array, and help documents the kinds and the contract (#163)", async () => {
   const src = await Bun.file(CLI).text();
   expect(src.match(/^ASK_ICONS=/gm)).toHaveLength(1);
-  for (const icon of ["❓", "🔧", "✅", "⛔", "🔔", "❗"]) {
-    // Every icon is a single code point, and appears in the table or the blocking mark.
-    expect([...icon]).toHaveLength(1);
-    expect(src).toContain(icon);
-  }
+  // Read the icons out of the script itself: each must be exactly one code point (no variation
+  // selector), and together they are the contract's five kinds.
+  const table = src.match(/^ASK_ICONS=\((.*)\)$/m)?.[1] ?? "";
+  const entries = [...table.matchAll(/"([a-z]*):([^"]*)"/g)].map((m) => [m[1]!, m[2]!] as const);
+  expect(entries.map(([k]) => k)).toEqual(["question", "action", "approval", "blocker", ""]);
+  expect(entries.map(([, icon]) => icon)).toEqual(["❓", "🔧", "✅", "⛔", "🔔"]);
+  for (const [, icon] of entries) expect([...icon]).toHaveLength(1);
+  const blocking = src.match(/^ASK_BLOCKING='([^']*)'$/m)?.[1] ?? "";
+  expect(blocking).toBe("❗");
+  expect([...blocking]).toHaveLength(1);
   const usage = sqtk("help").err;
   for (const s of ["--kind", "--blocking", "--no-blocking", "question ❓", "action 🔧", "approval ✅", "blocker ⛔", "🔔", "❗"]) {
     expect(usage).toContain(s);
