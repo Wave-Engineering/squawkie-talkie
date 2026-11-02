@@ -7,6 +7,24 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **`sqtk add --kind K [--blocking]` marks what an ask on `bj:needs` is** (#163). The kind
+  (`question` ❓, `action` 🔧, `approval` ✅, `blocker` ⛔; none given is 🔔) becomes the item's
+  FIRST character, ahead of the `[<dev-name>·<repo>]` prefix, and `--blocking` adds `❗` after it
+  (a `blocker` is always blocking, so it takes none). The human sees the ask's shape at a glance in
+  `sqtk show`, the web UI and the statusline, and the agent spends no tokens: it passes a flag on a
+  call it already makes. The icons come from one table in `sqtk` (`ASK_ICONS`), a contract with the
+  kit's statusline parser. The flags are valid only on `bj:needs`; anywhere else, and for an unknown
+  kind, they exit 2 and add nothing. A plain `add` on `bj:needs` stores 🔔.
+- **`sqtk set <list> <seq> --kind K | --blocking | --no-blocking`** reclassifies an ask by
+  rewriting only its leading marker, so a `→ answer` survives byte for byte. `set --text` keeps the
+  item's marker unless the new text brings its own or `--kind`/`--blocking` is also given. An item
+  with no marker (an older client's) is left alone.
+
+### Changed
+- An `add` on `bj:needs` never doubles a marker or a prefix: text that already leads with a marker
+  and this dev-name's prefix is stored as it is.
+
 ## [0.12.0] — 2026-10-26 — sqtk refuses split arguments
 
 ### Fixed
