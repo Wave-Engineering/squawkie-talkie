@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-11-05 — answer options, notes, open-first ordering
+
 ### Added
 - **A squawk can carry answer options, and the reader can leave a note** (#168).
   - **Options:** `POST` a squawk (or `sqtk add --option "<label>"`, repeatable) with up to 8
