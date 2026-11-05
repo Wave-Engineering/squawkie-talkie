@@ -886,6 +886,8 @@ export async function renderList(
   }
   /** Inputs that already have a settle queued for their blur. */
   const blurWaiting = new WeakSet<HTMLElement>();
+  /** True while rows are being moved: a focusout then is the move, not the typist leaving. */
+  let reordering = false;
 
   function squawkRows(): HTMLElement[] {
     return Array.from(stack.querySelectorAll<HTMLElement>("[data-squawk-id]"));
@@ -904,13 +906,29 @@ export async function renderList(
 
   /** Put the rows in `desired` order, right after the entry row. */
   function reorderRows(desired: number[]): void {
-    let anchor: HTMLElement = newRow.el;
-    for (const sid of desired) {
-      const el = rowHandles.get(sid)?.el;
-      if (!el) continue;
-      // Re-inserting a node detaches it (and drops its focus), so leave rows already in place.
-      if (anchor.nextElementSibling !== el) anchor.insertAdjacentElement("afterend", el);
-      anchor = el;
+    // `moveBefore` moves a node and keeps its focus and state; browsers without it
+    // detach and re-insert, and flipReorder puts the focus back.
+    const mover = stack as HTMLElement & {
+      moveBefore?: (node: Node, child: Node | null) => void;
+    };
+    reordering = true;
+    try {
+      let anchor: HTMLElement = newRow.el;
+      for (const sid of desired) {
+        const el = rowHandles.get(sid)?.el;
+        if (!el) continue;
+        // Leave rows already in place: a move is not free, and may drop the focus.
+        if (anchor.nextElementSibling !== el) {
+          if (typeof mover.moveBefore === "function") {
+            mover.moveBefore(el, anchor.nextSibling);
+          } else {
+            anchor.insertAdjacentElement("afterend", el);
+          }
+        }
+        anchor = el;
+      }
+    } finally {
+      reordering = false;
     }
   }
 
@@ -919,13 +937,18 @@ export async function renderList(
    * where it is now: measure, move, invert with a transform, then let it go.
    */
   function flipReorder(desired: number[], animate: boolean): void {
-    // Moving a DOM node drops its focus, so put it back.
+    // Moving a DOM node can drop its focus, so put it back, caret and all.
     const active = document.activeElement as HTMLElement | null;
+    const caret =
+      active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
     const rows = squawkRows();
     const first = new Map(rows.map((r) => [r, r.getBoundingClientRect().top]));
     reorderRows(desired);
     if (active && active.isConnected && document.activeElement !== active) {
       active.focus({ preventScroll: true });
+      if (caret && active instanceof HTMLInputElement && caret[0] !== null && caret[1] !== null) {
+        active.setSelectionRange(caret[0], caret[1]);
+      }
     }
     if (!animate) return;
     const moving: HTMLElement[] = [];
@@ -969,6 +992,8 @@ export async function renderList(
       if (!stack.isConnected) return;
       // Text may have started being edited during the tremble: wait for that to end too.
       if (isEditing(handle)) {
+        // It has trembled already: when the edit ends it moves, with no second tremble.
+        markSettled();
         settleAfterEdit(handle);
         return;
       }
@@ -1094,6 +1119,7 @@ export async function renderList(
   // and its nav focus: a phone has no Esc or arrow keys to end it (#146). Focus
   // moving within the row, or the window losing focus, leaves the edit alone.
   stack.addEventListener("focusout", (event) => {
+    if (reordering) return; // a row was moved under the focus (#167); flipReorder restores it
     if (mode !== "edit" || focusedSquawkId === null) return;
     const handle = rowHandles.get(focusedSquawkId);
     // From anywhere in the row: the select or a button may hold the focus by now.

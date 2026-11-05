@@ -228,6 +228,34 @@ test.describe("Open first, tremble, then sink (#167)", () => {
     await ctx.close();
   });
 
+  test("a row being edited that is only displaced keeps its edit", async ({
+    seededPage: page,
+    browser,
+    baseURL,
+  }) => {
+    await seedThree(page, "SinkDisplaced");
+    const idA = await idOf(page, "a");
+    const idB = await idOf(page, "b");
+    const rowA = byId(page, idA);
+    const textA = rowA.locator(".squawk-row__text");
+    // Edit the bottom row (entry -> c -> b -> a, then i) and type into it.
+    for (let n = 0; n < 3; n++) await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("i");
+    await expect(textA).toHaveAttribute("data-vi-mode", "edit");
+    await page.keyboard.type("!");
+    await expect(textA).toHaveValue("a!");
+
+    // Another viewer closes b. b is the row that changed; a is only displaced when b
+    // sinks below it, and the edit in a must survive that.
+    const { ctx, viewer } = await openViewer(browser, baseURL!, page.url());
+    await byId(viewer, idB).locator("select").selectOption("rejected");
+    await expect.poll(() => order(page), { timeout: 5000 }).toEqual(["c", "a!", "b"]);
+    await expect(textA).toHaveAttribute("data-vi-mode", "edit");
+    await expect(textA).toBeFocused();
+    await expect(textA).toHaveValue("a!");
+    await ctx.close();
+  });
+
   test("the vi cursor stays on the same squawk after it moves", async ({
     seededPage: page,
     browser,
