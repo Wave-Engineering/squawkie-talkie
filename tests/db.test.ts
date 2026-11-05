@@ -315,10 +315,60 @@ test("list stats count every state, zero-filled, for mixed and empty lists", () 
     recorded: 0,
   });
   expect(byId.get(empty.id)?.last_activity).toBe(empty.created_at);
-  // Every list is there once, oldest first, with its own fields intact.
+  // Every list is there once, with its own fields intact (order: see the #167 tests).
   const ids = listListsWithStats().map((l) => l.id);
-  expect(ids).toEqual(listLists().map((l) => l.id));
+  expect([...ids].sort((x, y) => x - y)).toEqual(listLists().map((l) => l.id));
   expect(byId.get(mixed.id)?.name).toBe("Stats mixed");
+});
+
+// --- ordering (#167) -----------------------------------------------------------
+
+test("listSquawks puts open first, then the rest, each group newest first", () => {
+  const list = createList("Order open first");
+  const s1 = createSquawk(list.id, "one", "BJ");
+  const s2 = createSquawk(list.id, "two", "BJ");
+  const s3 = createSquawk(list.id, "three", "BJ");
+  const s4 = createSquawk(list.id, "four", "BJ");
+  updateSquawk(s2.id, { state: "confirmed" });
+  updateSquawk(s4.id, { state: "recorded" });
+  // open: s3 (seq 3), s1 (seq 1); others: s4 (seq 4), s2 (seq 2).
+  expect(listSquawks(list.id).map((s) => s.id)).toEqual([s3.id, s1.id, s4.id, s2.id]);
+  // Reopening puts it back into the open group by seq.
+  updateSquawk(s2.id, { state: "open" });
+  expect(listSquawks(list.id).map((s) => s.id)).toEqual([s3.id, s2.id, s1.id, s4.id]);
+});
+
+test("listListsWithStats sorts by last_activity, most recent first", async () => {
+  const a = createList("Order recent A");
+  const b = createList("Order recent B");
+  await sleep(5);
+  const sq = createSquawk(a.id, "touch A", "BJ");
+  const ids = () => listListsWithStats().map((l) => l.id);
+  // A's squawk is newer than B's creation, so A leads B.
+  expect(ids().indexOf(a.id)).toBeLessThan(ids().indexOf(b.id));
+  await sleep(5);
+  updateSquawk(sq.id, { state: "retired" }); // a state change bumps updated_at
+  const c = createList("Order recent C");
+  await sleep(5);
+  updateSquawk(sq.id, { state: "confirmed" });
+  // A changed after C was created, so A is ahead of C and C is ahead of B.
+  expect(ids().indexOf(a.id)).toBeLessThan(ids().indexOf(c.id));
+  expect(ids().indexOf(c.id)).toBeLessThan(ids().indexOf(b.id));
+});
+
+test("listListsWithStats breaks activity ties by id descending", () => {
+  const first = createList("Order tie 1");
+  const second = createList("Order tie 2");
+  // Force the same last_activity on both: no squawks, same created_at.
+  getDb().query("UPDATE lists SET created_at = ? WHERE id IN (?, ?)").run(
+    "2099-01-01T00:00:00.000Z",
+    first.id,
+    second.id,
+  );
+  const ids = listListsWithStats().map((l) => l.id);
+  expect(ids.indexOf(second.id)).toBeLessThan(ids.indexOf(first.id));
+  // The two are the newest by activity here, so they lead the list.
+  expect(ids.slice(0, 2)).toEqual([second.id, first.id]);
 });
 
 test("list stats for every list come from a single query", () => {

@@ -5,10 +5,13 @@ import {
   countByState,
   cycleState,
   debounce,
+  desiredOrder,
+  findMovedId,
   fitWithin,
   onEnter,
   overflowsClamp,
   stateClass,
+  targetIndex,
 } from "../src/client/detail.ts";
 import { changedSquawkIds } from "../src/client/counts.ts";
 
@@ -220,4 +223,53 @@ test("overflowsClamp defaults to CLAMP_LINES", () => {
   expect(CLAMP_LINES).toBe(3);
   expect(overflowsClamp(20 * 4, 20, 4)).toBe(false);
   expect(overflowsClamp(20 * 4, 20)).toBe(true);
+});
+
+// --- row order (#167) ----------------------------------------------------------
+
+const item = (id: number, state: Squawk["state"], seq: number) => ({ id, state, seq });
+
+test("desiredOrder: open first, then the rest, each newest (seq) first", () => {
+  const items = [
+    item(1, "open", 1),
+    item(2, "confirmed", 2),
+    item(3, "open", 3),
+    item(4, "recorded", 4),
+  ];
+  expect(desiredOrder(items)).toEqual([3, 1, 4, 2]);
+});
+
+test("targetIndex: a row that leaves open goes below the last open row", () => {
+  // Displayed: 3 (open), 2 (open), 1 (open). Row 2 becomes confirmed.
+  const others = [item(3, "open", 3), item(1, "open", 1)];
+  expect(targetIndex(others, item(2, "confirmed", 2))).toBe(2);
+});
+
+test("targetIndex: a reopened row joins the open group by seq", () => {
+  // Displayed: 3 (open), 1 (open), 4 (recorded), 2 (confirmed). Row 2 reopens.
+  const others = [item(3, "open", 3), item(1, "open", 1), item(4, "recorded", 4)];
+  expect(targetIndex(others, item(2, "open", 2))).toBe(1);
+});
+
+test("targetIndex: an unchanged state keeps its place", () => {
+  const rows = [item(3, "open", 3), item(2, "open", 2), item(1, "open", 1)];
+  expect(targetIndex(rows, rows[1]!)).toBe(1);
+});
+
+test("findMovedId: the one row out of place, or null", () => {
+  expect(findMovedId([3, 2, 1], [3, 2, 1])).toBeNull(); // already right
+  expect(findMovedId([3, 2, 1], [3, 1, 2])).toBe(2); // removing 2 makes the rest match
+  expect(findMovedId([4, 3, 2, 1], [4, 3, 1, 2])).toBe(2);
+  expect(findMovedId([3, 1, 4, 2], [3, 2, 1, 4])).toBe(2); // 2 rose into the open group
+  expect(findMovedId([1, 2, 3, 4], [4, 3, 2, 1])).toBeNull(); // many out of place
+});
+
+test("findMovedId: two neighbours that swap resolve to the row the caller names", () => {
+  // Either row's removal fixes the order; without a hint the first one wins.
+  expect(findMovedId([10, 5, 4], [10, 4, 5])).toBe(5);
+  // The row that actually changed (4) is the one that moves.
+  expect(findMovedId([10, 5, 4], [10, 4, 5], 4)).toBe(4);
+  // A hint that does not fix the order, or names an absent row, is ignored.
+  expect(findMovedId([3, 2, 1], [3, 1, 2], 3)).toBe(2);
+  expect(findMovedId([3, 2, 1], [3, 1, 2], 99)).toBe(2);
 });

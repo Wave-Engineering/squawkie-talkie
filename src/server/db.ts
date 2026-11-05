@@ -286,9 +286,19 @@ function queryListsWithStats(where = "", ...params: number[]): ListWithStats[] {
   return [...byId.values()];
 }
 
-/** Return all lists with their counts and `last_activity`, oldest first. */
+/**
+ * Return all lists with their counts and `last_activity`, most recently changed
+ * first (#167). Ties fall to the newer list (`id` descending). ISO timestamps
+ * order correctly as strings. `getListWithStats` is a single list and needs no order.
+ */
 export function listListsWithStats(): ListWithStats[] {
-  return queryListsWithStats();
+  return queryListsWithStats().sort((a, b) =>
+    a.last_activity === b.last_activity
+      ? b.id - a.id
+      : a.last_activity < b.last_activity
+        ? 1
+        : -1,
+  );
 }
 
 /** Return one list with its counts and `last_activity`, or null if absent. */
@@ -437,12 +447,15 @@ export function deleteSquawk(id: number): boolean {
   return getDb().query("DELETE FROM squawks WHERE id = ?").run(id).changes > 0;
 }
 
-/** Return a list's squawks, newest first (`seq DESC`), each with `image_ids`. */
+/**
+ * Return a list's squawks, each with `image_ids`: open ones first (they are the
+ * ones that need redress), then the rest, each group newest first (`seq DESC`) (#167).
+ */
 export function listSquawks(listId: number): Squawk[] {
   const rows = getDb()
     .query(
       `SELECT squawks.*, ${IMAGE_IDS_JSON_SELECT}
-       FROM squawks WHERE list_id = ? ORDER BY seq DESC`,
+       FROM squawks WHERE list_id = ? ORDER BY (state = 'open') DESC, seq DESC`,
     )
     .all(listId) as (SquawkRow & { image_ids_json: string })[];
   return rows.map(projectSquawk);
