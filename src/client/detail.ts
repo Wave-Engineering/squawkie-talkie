@@ -1759,9 +1759,12 @@ function buildSquawkRow(
    * Call it before the row's state changes here, since a settled row has no note to take.
    */
   const takeUnsavedNote = async (): Promise<string | undefined> => {
+    const open = rowState === "open"; // judged now, before the caller settles the row
     saveNote.cancel();
-    if (rowState !== "open") return undefined;
+    // Every caller waits its turn on the chain, settled row or not, so two quick state
+    // changes still reach the server in the order they were made.
     await noteInFlight;
+    if (!open) return undefined;
     const note = noteArea.value;
     return note !== lastSavedNote ? note : undefined;
   };
