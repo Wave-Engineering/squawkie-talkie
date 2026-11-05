@@ -41,6 +41,7 @@ import {
   updateSquawk,
   uploadSquawkImage,
   type ListDetail,
+  type SquawkPatch,
 } from "./api.ts";
 import { openCarousel } from "./carousel.ts";
 import { changedSquawkIds, markSeen, readLastSeen, renderCounts } from "./counts.ts";
@@ -721,19 +722,27 @@ export async function renderList(
     const sq = model.get(squawkId);
     if (!sq) return;
 
+    // A note typed a moment ago rides in the same request; the server locks it once the state leaves open (#173).
+    const noteTaken = handle.takeUnsavedNote();
     // A plain state change clears any answer chosen (#168), here as on the server.
     handle.setState(newState, null);
     handle.select.value = newState;
     model.set(squawkId, { ...sq, state: newState, choice: null });
     updateCounts();
 
-    updateSquawk(squawkId, { state: newState }, initials)
+    const sent = noteTaken
+      .then((note) => {
+        const patch: SquawkPatch = { state: newState };
+        if (note !== undefined) patch.note = note;
+        return updateSquawk(squawkId, patch, initials);
+      })
       .then((updated) => {
         markSeen(id, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         updateCounts();
       })
       .catch((err) => console.error("state update failed", err));
+    handle.trackStateChange(sent);
   }
 
   function doUndo(squawkId: number): void {
@@ -869,8 +878,13 @@ export async function renderList(
       return;
     }
     seeSquawk(squawk);
-    model.set(squawk.id, squawk);
-    handle.setState(squawk.state, squawk.choice);
+    // While this row's own state change is in flight, a frame can predate it (the note save
+    // that went out just before it says `open`). Keep the state the row already shows; the
+    // change's own frame and response bring the real one (#173).
+    const pending = handle.stateChangePending();
+    const held = pending ? model.get(squawk.id) : undefined;
+    model.set(squawk.id, held ? { ...squawk, state: held.state, choice: held.choice } : squawk);
+    if (!pending) handle.setState(squawk.state, squawk.choice);
     handle.setRecorder(squawk.initials);
     handle.setImageIds(squawk.image_ids);
     if (applyToInput) {
@@ -1383,8 +1397,24 @@ interface RowHandle {
   input: HTMLInputElement;
   select: HTMLSelectElement;
   setText(text: string): void;
-  /** Reflect a state and, for `confirmed`, the answer option chosen (#168). */
+  /** Reflect a state and, for `confirmed`, the answer option chosen (#168). Locks the note
+   * unless the state is `open` (#173). */
   setState(state: SquawkState, choice?: string | null): void;
+  /**
+   * Wait for any note save under way, then hand back a note that is typed but not saved
+   * (never rejects), for the caller to send in the SAME `PATCH` as its state change: the
+   * server locks a note once the state leaves open, and one request saves both or neither
+   * (#173). Call it BEFORE `setState`, since a settled row has no note to take.
+   */
+  takeUnsavedNote(): Promise<string | undefined>;
+  /** Mark a state change as in flight until `done` settles (never rejects). */
+  trackStateChange(done: Promise<unknown>): void;
+  /**
+   * True while a state change this row sent is still in flight. A frame that arrives then
+   * can be one the change has already overtaken (the note save that went out just before
+   * it), so the caller must not let it put the row's state back.
+   */
+  stateChangePending(): boolean;
   /**
    * Reflect a note from the server (#168). Skipped while the textarea has focus, like
    * the text box; the caller passes only notes from a squawk that is not open, since an
@@ -1546,20 +1576,32 @@ function buildSquawkRow(
     const isAnswer = picked.startsWith(ANSWER_PREFIX);
     const state: SquawkState = isAnswer ? "confirmed" : (picked as SquawkState);
     choice = isAnswer ? picked.slice(ANSWER_PREFIX.length) : null;
+    // A note typed a moment ago rides in this same request; the server locks it once the
+    // state leaves open, so it cannot follow later.
+    const noteTaken = takeUnsavedNote();
     paintAnswered();
     applyState(row, state);
+    rowState = state;
+    paintNoteLock();
     const current = model.get(squawk.id);
     if (current) {
       model.set(squawk.id, { ...current, state, choice });
     }
     onChange();
-    updateSquawk(squawk.id, choice !== null ? { choice } : { state }, initials)
+    const chosen = choice; // `choice` can change again before the note save settles
+    const sent = noteTaken
+      .then((note) => {
+        const patch: SquawkPatch = chosen !== null ? { choice: chosen } : { state };
+        if (note !== undefined) patch.note = note;
+        return updateSquawk(squawk.id, patch, initials);
+      })
       .then((updated) => {
         markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
         onChange();
       })
       .catch((err) => console.error("state update failed", err));
+    trackStateChange(sent);
   });
 
   const recorder = document.createElement("span");
@@ -1680,16 +1722,59 @@ function buildSquawkRow(
   };
   paintNoteDot();
 
+  // A note is locked once the item leaves open (#173): the agent was told the item was
+  // settled, and a note changed after that would not reach it. The box stays readable.
+  let rowState: SquawkState = squawk.state;
+  const paintNoteLock = (): void => {
+    const locked = rowState !== "open";
+    noteArea.readOnly = locked;
+    noteBtn.setAttribute("aria-label", locked ? "View note (locked once settled)" : "Edit note");
+  };
+  paintNoteLock();
+
+  /**
+   * Note saves run one after another, each reading the box when its turn comes, so two
+   * saves can never cross on the wire and leave an older note stored last.
+   */
+  let noteInFlight: Promise<void> = Promise.resolve();
   const saveNote = debounce(() => {
-    const note = noteArea.value;
-    if (note === lastSavedNote) return;
-    // No initials: a note is not a change to the item, so it leaves the recorder alone.
-    updateSquawk(squawk.id, { note })
-      .then(() => {
+    noteInFlight = noteInFlight.then(async () => {
+      if (rowState !== "open") return;
+      const note = noteArea.value;
+      if (note === lastSavedNote) return;
+      try {
+        // No initials: a note is not a change to the item, so it leaves the recorder alone.
+        await updateSquawk(squawk.id, { note });
         lastSavedNote = note;
-      })
-      .catch((err) => console.error("note save failed", err));
+      } catch (err) {
+        console.error("note save failed", err);
+      }
+    });
   }, NOTE_SAVE_MS);
+  /**
+   * For a state or choice change, which the server locks the note behind: wait for the
+   * saves under way, then return a note still unsaved (typed since, or one whose save
+   * failed) so the change carries it in the same request. Saved together or not at all,
+   * so a failed save can never be followed by a lock that strands the draft.
+   * Call it before the row's state changes here, since a settled row has no note to take.
+   */
+  const takeUnsavedNote = async (): Promise<string | undefined> => {
+    const open = rowState === "open"; // judged now, before the caller settles the row
+    saveNote.cancel();
+    // Every caller waits its turn on the chain, settled row or not, so two quick state
+    // changes still reach the server in the order they were made.
+    await noteInFlight;
+    if (!open) return undefined;
+    const note = noteArea.value;
+    return note !== lastSavedNote ? note : undefined;
+  };
+  let statePending = 0;
+  const trackStateChange = (done: Promise<unknown>): void => {
+    statePending++;
+    void done.finally(() => {
+      statePending--;
+    });
+  };
 
   const setNoteOpen = (open: boolean): void => {
     noteArea.hidden = !open;
@@ -1729,9 +1814,14 @@ function buildSquawkRow(
       lastSaved = text;
       showText(text);
     },
+    takeUnsavedNote,
+    trackStateChange,
+    stateChangePending: (): boolean => statePending > 0,
     setState: (state: SquawkState, newChoice: string | null = null): void => {
       choice = newChoice;
       applyState(row, state);
+      rowState = state;
+      paintNoteLock();
       if (document.activeElement !== select) {
         select.value = valueFor(state);
         paintAnswered();

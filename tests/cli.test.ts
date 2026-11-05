@@ -950,23 +950,24 @@ test("show prints a disposed squawk's choice and note, and hides a draft note on
   const sq = (await squawk("answers-c", 1)) as WireAnswered;
 
   // A note written while the item is open is a draft: saved, but not shown.
-  expect((await patchSquawk(sq.id, { note: "mind the cliff" })).status).toBe(200);
+  expect((await patchSquawk(sq.id, { note: "mind the cliff\nand the weather" })).status).toBe(200);
   const open = sqtk("show", "answers-c").out;
   expect(open).toContain("options: Left | Right");
   expect(open).not.toContain("mind the cliff");
 
-  // Once the reader picks an answer, the choice and the note show.
+  // Once the reader picks an answer, the choice and the note show, and a multi-line note
+  // keeps its lines under the label.
   expect((await patchSquawk(sq.id, { choice: "Right" })).status).toBe(200);
   const done = sqtk("show", "answers-c").out;
   expect(done).toContain("✓ [confirmed] Which way?");
   expect(done).toContain("      choice: Right");
-  expect(done).toContain("      note: mind the cliff");
+  expect(done).toMatch(/note: mind the cliff\n {12}and the weather/);
   expect(done).not.toContain("options:");
   expect(sqtk("show", "answers-c", "--json").out).toContain('"choice": "Right"');
 
-  // A multi-line note keeps its lines under the label.
-  expect((await patchSquawk(sq.id, { note: "line one\nline two" })).status).toBe(200);
-  expect(sqtk("show", "answers-c").out).toMatch(/note: line one\n {12}line two/);
+  // The note is locked once the item is settled (#173).
+  expect((await patchSquawk(sq.id, { note: "too late" })).status).toBe(409);
+  expect(sqtk("show", "answers-c").out).not.toContain("too late");
 });
 
 test("add --option with a bad label is refused by the server and creates nothing (#168)", async () => {

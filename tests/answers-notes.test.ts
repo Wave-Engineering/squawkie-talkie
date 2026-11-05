@@ -246,18 +246,101 @@ test("a note from a client with an Authorization header is a 403 when a token is
     const machine = await patch(sq.id, { note: "from a script" }, { authorization: "Bearer s3cret" });
     expect(machine.status).toBe(403);
     expect(machine.body.error).toMatch(/UI/);
-    // The same client may still change the state, and read the note.
-    const state = await patch(sq.id, { state: "confirmed" }, { authorization: "Bearer s3cret" });
-    expect(state.status).toBe(200);
     // The browser sends no header: the note goes through.
     const browser = await patch(sq.id, { note: "from the UI" });
     expect(browser.status).toBe(200);
     expect(browser.body.note).toBe("from the UI");
+    // The same client may still change the state, and read the note.
+    const state = await patch(sq.id, { state: "confirmed" }, { authorization: "Bearer s3cret" });
+    expect(state.status).toBe(200);
   } finally {
     if (saved === undefined) delete process.env.SQUAWK_API_TOKEN;
     else process.env.SQUAWK_API_TOKEN = saved;
   }
   expect((await get(sq.id)).note).toBe("from the UI");
+});
+
+// --- the note is locked once the item leaves open (#173) ----------------------
+
+test("a note on a squawk that is not open is a 409; on an open one it saves", async () => {
+  const list = await createList("NoteLock");
+  const sq = (await post(list.id)).body;
+  expect((await patch(sq.id, { note: "while open" })).status).toBe(200);
+
+  expect((await patch(sq.id, { state: "retired" })).status).toBe(200);
+  const late = await patch(sq.id, { note: "too late" });
+  expect(late.status).toBe(409);
+  expect(late.body.error).toMatch(/locked/);
+  expect((await get(sq.id)).note).toBe("while open"); // untouched
+
+  // Every settled state locks it, not only retired.
+  for (const state of ["confirmed", "rejected", "recorded"]) {
+    expect((await patch(sq.id, { state })).status).toBe(200);
+    expect((await patch(sq.id, { note: `in ${state}` })).status).toBe(409);
+  }
+  expect((await get(sq.id)).note).toBe("while open");
+});
+
+test("the same note as the stored one on a settled squawk is a no-op that does not bump updated_at", async () => {
+  const list = await createList("NoteLockRepeat");
+  const sq = (await post(list.id)).body;
+  expect((await patch(sq.id, { note: "kept" })).status).toBe(200);
+  expect((await patch(sq.id, { state: "confirmed" })).status).toBe(200);
+  const before = await get(sq.id);
+
+  const again = await patch(sq.id, { note: "kept" });
+  expect(again.status).toBe(200);
+  expect(again.body.note).toBe("kept");
+  expect((await get(sq.id)).updated_at).toBe(before.updated_at);
+});
+
+test("one PATCH with a note and a state on an open squawk saves both", async () => {
+  const list = await createList("NoteWithState");
+  const sq = (await post(list.id)).body;
+  const res = await patch(sq.id, { note: "with the verdict", state: "confirmed" });
+  expect(res.status).toBe(200);
+  expect(res.body.state).toBe("confirmed");
+  expect(res.body.note).toBe("with the verdict");
+});
+
+test("one PATCH with a note and a choice on an open squawk saves both", async () => {
+  const list = await createList("NoteWithChoice");
+  const sq = (await post(list.id, { options: ["Ship it", "Hold"] })).body;
+  const res = await patch(sq.id, { note: "with the answer", choice: "Hold" });
+  expect(res.status).toBe(200);
+  expect(res.body.state).toBe("confirmed");
+  expect(res.body.choice).toBe("Hold");
+  expect(res.body.note).toBe("with the answer");
+});
+
+test("a note with a text edit on a settled squawk is a 409 and applies neither", async () => {
+  const list = await createList("NoteLockText");
+  const sq = (await post(list.id)).body;
+  expect((await patch(sq.id, { state: "confirmed" })).status).toBe(200);
+  const res = await patch(sq.id, { note: "late", text: "edited" });
+  expect(res.status).toBe(409);
+  const stored = await get(sq.id);
+  expect(stored.note).toBe("");
+  expect(stored.text).not.toBe("edited");
+});
+
+test("reopening a settled squawk unlocks the note and keeps what was stored", async () => {
+  const list = await createList("NoteReopen");
+  const sq = (await post(list.id)).body;
+  expect((await patch(sq.id, { note: "first thoughts" })).status).toBe(200);
+  expect((await patch(sq.id, { state: "confirmed" })).status).toBe(200);
+  expect((await patch(sq.id, { note: "locked" })).status).toBe(409);
+
+  expect((await patch(sq.id, { state: "open" })).status).toBe(200);
+  expect((await get(sq.id)).note).toBe("first thoughts");
+  const edited = await patch(sq.id, { note: "second thoughts" });
+  expect(edited.status).toBe(200);
+  expect((await get(sq.id)).note).toBe("second thoughts");
+});
+
+test("a note for a squawk that does not exist is a 404", async () => {
+  const res = await patch(999999, { note: "nobody home" });
+  expect(res.status).toBe(404);
 });
 
 test("with no token configured the Authorization guard does not apply", async () => {

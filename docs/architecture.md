@@ -62,7 +62,17 @@ lists                              squawks                          squawk_image
   stores the label in `choice`; counts, glyphs and the open-first order are untouched. Options
   are set at create and never change. Any plain state change clears the `choice`. The
   **note** is the reader's one-way channel: written in the UI, read by API clients. A note-only
-  PATCH leaves `updated_at` alone, since a draft is not a change to the item.
+  PATCH leaves `updated_at` alone, since a draft is not a change to the item. **The note is
+  locked once the squawk leaves `open` (#173)**: the agent was told it was settled, and a note
+  changed after that would not reach it. A PATCH carrying a `note` is judged on the stored
+  state before it applies: `409` when that is not `open` (repeating the stored note is a
+  no-op), so one request with a `note` and a `state` on an open squawk still saves both.
+  Reopening the squawk unlocks the note and keeps what was stored. The client makes the box
+  read-only on a settled row, and sends a note that is typed but not yet saved in the SAME
+  request as a state or choice change (after the note saves under way, which run one at a
+  time), so a note typed just before picking an answer is saved with it or not at all, and a
+  failed save cannot be followed by a lock that strands the draft. While such a change is in
+  flight the row ignores a frame's state: the note save before it says `open`.
 - **A note rides an SSE frame only once the item is disposed** — `forEvent()` in `api.ts`
   empties the `note` of every `squawk.created` / `squawk.updated` frame while the squawk is
   `open`, so a half-written note is never broadcast; the REST responses are the item's own
@@ -117,7 +127,7 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | GET | `/api/lists/:id/squawks` | — | `Squawk[]` |
 | POST | `/api/lists/:id/squawks` | `{ text, initials, options? }` | `201 Squawk` — `options` are up to 8 answer labels (1–40 chars, no duplicates, none a state name); `400` on bad ones or on a `note` |
 | POST | `/api/squawks` | `{ list_name, text, initials, options? }` | `201 Squawk` — quick-add by list name (creates the list if absent); `400` on bad input |
-| PATCH | `/api/squawks/:id` | `{ text?, state?, choice?, note?, initials? }` | `200 Squawk` (needs one of `text`, `state`, `choice`, `note`). `choice` must be one of the squawk's options and resolves it as `confirmed`; give it instead of `state`. `options` are refused (`400`). `note` is at most 4000 chars; with an `Authorization` header and a configured token it is `403` |
+| PATCH | `/api/squawks/:id` | `{ text?, state?, choice?, note?, initials? }` | `200 Squawk` (needs one of `text`, `state`, `choice`, `note`). `choice` must be one of the squawk's options and resolves it as `confirmed`; give it instead of `state`. `options` are refused (`400`). `note` is at most 4000 chars; with an `Authorization` header and a configured token it is `403`; on a squawk that is not `open` it is `409` (locked), unless it repeats the stored note |
 | DELETE | `/api/squawks/:id` | — | `{ ok: true }` — the **one direct** squawk true-delete; its sole caller is the editor `u` undo, retracting a just-created squawk within the settle-in window (`404` if unknown). Every other individual-squawk transition is a state change; whole-list deletion cascades separately via `DELETE /api/lists/:id`. |
 | POST | `/api/squawks/:id/images` | raw image bytes; `Content-Type: image/jpeg` \| `image/png` \| `image/webp` | `200 Squawk` — **append** one image (up to 5, ordered by upload); `404` unknown squawk, `415` type not in the raster allowlist, `409` already at the 5-image cap, `413` over the ~2 MB cap, `400` empty body |
 | GET | `/api/squawks/:id/images/:id` | — | one stored image's bytes with its stored raster `Content-Type` (never `text/html` / `image/svg+xml`); `404` if the id isn't on that squawk |
