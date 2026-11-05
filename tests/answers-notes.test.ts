@@ -303,6 +303,16 @@ test("one PATCH with a note and a state on an open squawk saves both", async () 
   expect(res.body.note).toBe("with the verdict");
 });
 
+test("one PATCH with a note and a choice on an open squawk saves both", async () => {
+  const list = await createList("NoteWithChoice");
+  const sq = (await post(list.id, { options: ["Ship it", "Hold"] })).body;
+  const res = await patch(sq.id, { note: "with the answer", choice: "Hold" });
+  expect(res.status).toBe(200);
+  expect(res.body.state).toBe("confirmed");
+  expect(res.body.choice).toBe("Hold");
+  expect(res.body.note).toBe("with the answer");
+});
+
 test("a note with a text edit on a settled squawk is a 409 and applies neither", async () => {
   const list = await createList("NoteLockText");
   const sq = (await post(list.id)).body;

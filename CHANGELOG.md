@@ -14,7 +14,7 @@ at `v0.3.0`**.
   settled row (it can still be opened to read), and a `PATCH` carrying a `note` on a squawk that is
   not open is a `409`, unless it repeats the stored note. One request with a `note` and a `state`
   on an open squawk still saves both, and reopening a squawk unlocks its note and keeps what was
-  stored. A note typed a moment before picking an answer is sent first, so the lock cannot lose it.
+  stored. A note typed a moment before picking an answer travels in the same request as the answer, so the lock cannot lose it.
   Nothing live changes: the squawk server is still on an earlier release.
 
 ## [0.14.0] — 2026-11-05 — answer options, notes, open-first ordering

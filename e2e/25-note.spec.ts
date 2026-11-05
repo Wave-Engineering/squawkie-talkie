@@ -211,5 +211,11 @@ test.describe("Note on a squawk (#168)", () => {
         return [s.state, s.choice, s.note];
       })
       .toEqual(["confirmed", "Ship it", "after the freeze"]);
+
+    // The row ends settled and locked. The note save that went out just before the answer
+    // carries an `open` frame; it must not put the row back (#173).
+    await expect(row.locator("select")).toHaveValue(/Ship it$/);
+    await expect(row.locator(".squawk-row__note-btn")).toHaveAttribute("aria-label", /locked/);
+    await expect(row.locator(".squawk-row__note")).toBeEditable({ editable: false });
   });
 });

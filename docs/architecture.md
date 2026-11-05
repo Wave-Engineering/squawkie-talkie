@@ -68,8 +68,11 @@ lists                              squawks                          squawk_image
   state before it applies: `409` when that is not `open` (repeating the stored note is a
   no-op), so one request with a `note` and a `state` on an open squawk still saves both.
   Reopening the squawk unlocks the note and keeps what was stored. The client makes the box
-  read-only on a settled row, and sends a note that is typed but not yet saved before it sends
-  a state or choice change, so a note typed just before picking an answer is not lost.
+  read-only on a settled row, and sends a note that is typed but not yet saved in the SAME
+  request as a state or choice change (after the note saves under way, which run one at a
+  time), so a note typed just before picking an answer is saved with it or not at all, and a
+  failed save cannot be followed by a lock that strands the draft. While such a change is in
+  flight the row ignores a frame's state: the note save before it says `open`.
 - **A note rides an SSE frame only once the item is disposed** — `forEvent()` in `api.ts`
   empties the `note` of every `squawk.created` / `squawk.updated` frame while the squawk is
   `open`, so a half-written note is never broadcast; the REST responses are the item's own
