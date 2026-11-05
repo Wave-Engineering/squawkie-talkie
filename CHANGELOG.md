@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-11-05 — note locked once settled
+
 ### Changed
 - **A squawk's note is locked once the item leaves `open`** (#173). The agent that asked is told
   the item was settled, with the note, and a note written after that would not reach it: the kit's
