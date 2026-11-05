@@ -23,7 +23,9 @@
  * clears it) and `note` (written in the UI; refused with 403 from a client that
  * presents an `Authorization` header while a token is configured). Every SSE
  * `squawk.created` / `squawk.updated` frame carries an empty `note` while the
- * squawk is `open`; the stored note rides once it is not.
+ * squawk is `open`; the stored note rides once it is not. A note is locked once the
+ * squawk leaves `open` (#173): a PATCH carrying one is a 409, unless it repeats the
+ * stored note. Reopening the squawk unlocks it.
  *   DELETE /api/squawks/:id           -> deleteSquawk(id)               (200/404)
  *
  * Invalid input yields 400 `{ error }`; unknown list/squawk yields 404.
@@ -464,6 +466,30 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
     }
     // Empty after normalization → leave initials untouched rather than wiping.
     initials = normalizeInitials(body.initials) || undefined;
+  }
+
+  // A note is locked once the squawk leaves open (#173): the agent was told it was
+  // settled, and a change after that would not reach it. Judged on the stored state
+  // before this patch applies, so one request that carries a note with a state change on
+  // an open squawk still saves both. Repeating the stored note is a harmless no-op.
+  if (patch.note !== undefined) {
+    const stored = getSquawk(id);
+    if (!stored) {
+      return json({ error: "squawk not found" }, 404);
+    }
+    if (stored.state !== "open") {
+      if (patch.note !== stored.note) {
+        return json({ error: "the note is locked once the squawk leaves open" }, 409);
+      }
+      delete patch.note;
+      if (
+        patch.text === undefined &&
+        patch.state === undefined &&
+        patch.choice === undefined
+      ) {
+        return json(stored);
+      }
+    }
   }
 
   try {

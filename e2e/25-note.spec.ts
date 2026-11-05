@@ -139,4 +139,77 @@ test.describe("Note on a squawk (#168)", () => {
     await expect(row.locator(".squawk-row__note")).toHaveValue("still here");
     await expect(row.locator(".squawk-row__note-btn")).toHaveClass(/squawk-row__note-btn--has/);
   });
+
+  test("the note box is read-only once the item is settled, and editable again when it is reopened (#173)", async ({
+    seededPage: page,
+  }) => {
+    await createList(page, "NoteLocked");
+    await addSquawk(page, "lock my note");
+    const listId = listIdOf(page);
+    const row = page.locator("[data-squawk-id]").first();
+    const btn = row.locator(".squawk-row__note-btn");
+    const box = row.locator(".squawk-row__note");
+
+    await btn.click();
+    await box.fill("written while open");
+    await page.keyboard.press("Escape");
+    await expect.poll(() => storedNote(page, listId)).toBe("written while open");
+    await expect(box).toBeEditable({ editable: true });
+
+    // Settled: the box can still be opened to read, but not edited.
+    await row.locator("select").selectOption("confirmed");
+    await expect(btn).toHaveAttribute("aria-label", /locked/);
+    await btn.click();
+    await expect(box).toBeVisible();
+    await expect(box).toHaveValue("written while open");
+    await expect(box).toBeEditable({ editable: false });
+    await page.keyboard.press("Escape");
+
+    // A reload keeps it locked and the stored note as it was.
+    await page.reload();
+    const again = page.locator("[data-squawk-id]").first();
+    await again.locator(".squawk-row__note-btn").click();
+    await expect(again.locator(".squawk-row__note")).toBeEditable({ editable: false });
+    await expect(again.locator(".squawk-row__note")).toHaveValue("written while open");
+    expect(await storedNote(page, listId)).toBe("written while open");
+    await page.keyboard.press("Escape");
+
+    // Reopened: editable again, and it keeps what was stored.
+    await again.locator("select").selectOption("open");
+    await expect(again.locator(".squawk-row__note-btn")).toHaveAttribute("aria-label", "Edit note");
+    await again.locator(".squawk-row__note-btn").click();
+    await expect(again.locator(".squawk-row__note")).toBeEditable({ editable: true });
+    await again.locator(".squawk-row__note").fill("changed after reopening");
+    await page.keyboard.press("Escape");
+    await expect.poll(() => storedNote(page, listId)).toBe("changed after reopening");
+  });
+
+  test("a note typed just before picking an answer is saved with the choice, not lost to the lock (#173)", async ({
+    seededPage: page,
+  }) => {
+    await createList(page, "NoteThenPick");
+    const res = await page.request.post(`/api/lists/${listIdOf(page)}/squawks`, {
+      data: { text: "Ship it?", initials: "AA", options: ["Ship it", "Hold"] },
+    });
+    expect(res.status()).toBe(201);
+    const id = ((await res.json()) as { id: number }).id;
+    const listId = listIdOf(page);
+    const row = page.locator(`[data-squawk-id="${id}"]`);
+    await expect(row).toHaveCount(1);
+
+    // Type a note, and pick the answer straight away: before the debounce would have saved it.
+    await row.locator(".squawk-row__note-btn").click();
+    await row.locator(".squawk-row__note").fill("after the freeze");
+    await row.locator("select").selectOption({ label: "✓ Ship it" });
+
+    await expect
+      .poll(async () => {
+        const detail = (await (await page.request.get(`/api/lists/${listId}`)).json()) as {
+          squawks: Array<{ id: number; state: string; choice: string | null; note: string }>;
+        };
+        const s = detail.squawks.find((x) => x.id === id)!;
+        return [s.state, s.choice, s.note];
+      })
+      .toEqual(["confirmed", "Ship it", "after the freeze"]);
+  });
 });

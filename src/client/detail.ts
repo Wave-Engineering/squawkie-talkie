@@ -721,13 +721,16 @@ export async function renderList(
     const sq = model.get(squawkId);
     if (!sq) return;
 
+    // A note typed a moment ago goes out first; the server locks it once the state leaves open (#173).
+    const noteSaved = handle.whenNoteSaved();
     // A plain state change clears any answer chosen (#168), here as on the server.
     handle.setState(newState, null);
     handle.select.value = newState;
     model.set(squawkId, { ...sq, state: newState, choice: null });
     updateCounts();
 
-    updateSquawk(squawkId, { state: newState }, initials)
+    noteSaved
+      .then(() => updateSquawk(squawkId, { state: newState }, initials))
       .then((updated) => {
         markSeen(id, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
@@ -1383,8 +1386,15 @@ interface RowHandle {
   input: HTMLInputElement;
   select: HTMLSelectElement;
   setText(text: string): void;
-  /** Reflect a state and, for `confirmed`, the answer option chosen (#168). */
+  /** Reflect a state and, for `confirmed`, the answer option chosen (#168). Locks the note
+   * unless the state is `open` (#173). */
   setState(state: SquawkState, choice?: string | null): void;
+  /**
+   * Save a note that is typed but not yet sent, and resolve once that save has settled
+   * (never rejects). Call it BEFORE `setState` and before sending a state change, since a
+   * settled row's note is locked (#173).
+   */
+  whenNoteSaved(): Promise<void>;
   /**
    * Reflect a note from the server (#168). Skipped while the textarea has focus, like
    * the text box; the caller passes only notes from a squawk that is not open, since an
@@ -1546,14 +1556,20 @@ function buildSquawkRow(
     const isAnswer = picked.startsWith(ANSWER_PREFIX);
     const state: SquawkState = isAnswer ? "confirmed" : (picked as SquawkState);
     choice = isAnswer ? picked.slice(ANSWER_PREFIX.length) : null;
+    // A note typed a moment ago goes out first; the server locks it once the state leaves open.
+    const noteSaved = whenNoteSaved();
     paintAnswered();
     applyState(row, state);
+    rowState = state;
+    paintNoteLock();
     const current = model.get(squawk.id);
     if (current) {
       model.set(squawk.id, { ...current, state, choice });
     }
     onChange();
-    updateSquawk(squawk.id, choice !== null ? { choice } : { state }, initials)
+    const chosen = choice; // `choice` can change again before the note save settles
+    noteSaved
+      .then(() => updateSquawk(squawk.id, chosen !== null ? { choice: chosen } : { state }, initials))
       .then((updated) => {
         markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
@@ -1680,16 +1696,39 @@ function buildSquawkRow(
   };
   paintNoteDot();
 
+  // A note is locked once the item leaves open (#173): the agent was told the item was
+  // settled, and a note changed after that would not reach it. The box stays readable.
+  let rowState: SquawkState = squawk.state;
+  const paintNoteLock = (): void => {
+    const locked = rowState !== "open";
+    noteArea.readOnly = locked;
+    noteBtn.setAttribute("aria-label", locked ? "View note (locked once settled)" : "Edit note");
+  };
+  paintNoteLock();
+
+  /** The save in flight, so a state change can wait for it (see `whenNoteSaved`). */
+  let noteInFlight: Promise<void> = Promise.resolve();
   const saveNote = debounce(() => {
+    if (rowState !== "open") return;
     const note = noteArea.value;
     if (note === lastSavedNote) return;
     // No initials: a note is not a change to the item, so it leaves the recorder alone.
-    updateSquawk(squawk.id, { note })
+    noteInFlight = updateSquawk(squawk.id, { note })
       .then(() => {
         lastSavedNote = note;
       })
       .catch((err) => console.error("note save failed", err));
   }, NOTE_SAVE_MS);
+  /**
+   * Save a note that is typed but not yet sent, and resolve once that save has settled
+   * (it never rejects). A state or choice change waits on this before it goes out: the
+   * server locks the note when the state leaves open, so the note has to land first.
+   * Call it before the row's state changes here, since a locked row saves nothing.
+   */
+  const whenNoteSaved = (): Promise<void> => {
+    saveNote.flush();
+    return noteInFlight;
+  };
 
   const setNoteOpen = (open: boolean): void => {
     noteArea.hidden = !open;
@@ -1729,9 +1768,12 @@ function buildSquawkRow(
       lastSaved = text;
       showText(text);
     },
+    whenNoteSaved,
     setState: (state: SquawkState, newChoice: string | null = null): void => {
       choice = newChoice;
       applyState(row, state);
+      rowState = state;
+      paintNoteLock();
       if (document.activeElement !== select) {
         select.value = valueFor(state);
         paintAnswered();

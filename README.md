@@ -27,7 +27,8 @@ Two concepts only: **Squawk Lists** and **Squawks**.
   created. The **📝** button beside the camera opens a note you write for whoever reads the
   answer: it is saved as you type, but only goes out to listeners once the squawk is no longer
   open, so a half-written note is never sent. The note is one-way — you write it in the UI,
-  agents read it (`sqtk show`) and cannot write one.
+  agents read it (`sqtk show`) and cannot write one. It locks once the squawk is settled: write
+  the note first, then settle the item (reopen the item to edit it again).
 - **Keyboard-first** — **Enter** commits, **Esc** reverts to last-saved, **↑/↓** move
   between squawks.
 - **Real-time** — changes by other viewers appear live (Server-Sent Events,
