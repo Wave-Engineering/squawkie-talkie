@@ -263,3 +263,13 @@ test("findMovedId: the one row out of place, or null", () => {
   expect(findMovedId([3, 1, 4, 2], [3, 2, 1, 4])).toBe(2); // 2 rose into the open group
   expect(findMovedId([1, 2, 3, 4], [4, 3, 2, 1])).toBeNull(); // many out of place
 });
+
+test("findMovedId: two neighbours that swap resolve to the row the caller names", () => {
+  // Either row's removal fixes the order; without a hint the first one wins.
+  expect(findMovedId([10, 5, 4], [10, 4, 5])).toBe(5);
+  // The row that actually changed (4) is the one that moves.
+  expect(findMovedId([10, 5, 4], [10, 4, 5], 4)).toBe(4);
+  // A hint that does not fix the order, or names an absent row, is ignored.
+  expect(findMovedId([3, 2, 1], [3, 1, 2], 3)).toBe(2);
+  expect(findMovedId([3, 2, 1], [3, 1, 2], 99)).toBe(2);
+});

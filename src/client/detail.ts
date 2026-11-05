@@ -315,18 +315,25 @@ export function targetIndex(order: readonly OrderItem[], moved: OrderItem): numb
  * The one row that is out of place: the id whose removal makes the current order
  * match the desired one. Null when the order is already right, or when more than
  * one row is out of place (the caller then reorders everything without animation).
+ * When two neighbours would swap, either one's removal fixes the order, so the
+ * caller can name the row it knows changed with `prefer`.
  */
 export function findMovedId(
   current: readonly number[],
   desired: readonly number[],
+  prefer?: number,
 ): number | null {
   if (current.length === desired.length && current.every((v, i) => v === desired[i])) {
     return null;
   }
-  for (const id of current) {
+  const fixedBy = (id: number): boolean => {
     const c = current.filter((v) => v !== id);
     const d = desired.filter((v) => v !== id);
-    if (c.length === d.length && c.every((v, i) => v === d[i])) return id;
+    return c.length === d.length && c.every((v, i) => v === d[i]);
+  };
+  if (prefer !== undefined && current.includes(prefer) && fixedBy(prefer)) return prefer;
+  for (const id of current) {
+    if (fixedBy(id)) return id;
   }
   return null;
 }
@@ -512,6 +519,8 @@ export async function renderList(
       handle.el.classList.add("squawk-row--nav-focus");
     }
     updateModeBar();
+    // A row that waited for this edit to end (#167) can move now.
+    settleOrder();
   }
 
   function resetEditTimer(squawkId: number): void {
@@ -754,6 +763,7 @@ export async function renderList(
     }
     model.delete(squawkId);
     settleInTimes.delete(squawkId);
+    settledState.delete(squawkId);
     if (changedIds.delete(squawkId)) paintChanged();
     if (focusedSquawkId === squawkId) {
       focusedSquawkId = null;
@@ -865,6 +875,17 @@ export async function renderList(
   // --- Row order (#167): open first; a changed row trembles, then sinks or rises ---
   /** Rows whose tremble is running. While any is, the order is left alone. */
   const trembling = new Set<number>();
+  /**
+   * The state each row had when the order was last settled. A row whose model state
+   * differs is the one that just changed; a row with no entry is new (inserted, not
+   * changed), and a new row is placed at once, never trembled.
+   */
+  const settledState = new Map<number, SquawkState>();
+  function markSettled(): void {
+    for (const [sid, squawk] of model) settledState.set(sid, squawk.state);
+  }
+  /** Inputs that already have a settle queued for their blur. */
+  const blurWaiting = new WeakSet<HTMLElement>();
 
   function squawkRows(): HTMLElement[] {
     return Array.from(stack.querySelectorAll<HTMLElement>("[data-squawk-id]"));
@@ -887,7 +908,8 @@ export async function renderList(
     for (const sid of desired) {
       const el = rowHandles.get(sid)?.el;
       if (!el) continue;
-      anchor.insertAdjacentElement("afterend", el);
+      // Re-inserting a node detaches it (and drops its focus), so leave rows already in place.
+      if (anchor.nextElementSibling !== el) anchor.insertAdjacentElement("afterend", el);
       anchor = el;
     }
   }
@@ -920,7 +942,8 @@ export async function renderList(
       for (const r of moving) {
         r.style.transition = `transform ${SINK_MS}ms ease`;
         r.style.transform = "";
-        const done = (): void => {
+        const done = (event: Event): void => {
+          if (event.target !== r) return; // a child's own transition bubbles up here
           r.style.transition = "";
           r.removeEventListener("transitionend", done);
         };
@@ -934,6 +957,7 @@ export async function renderList(
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
     if (reduce) {
       flipReorder(wantedOrder(currentOrder()), false);
+      markSettled();
       return;
     }
     trembling.add(movedId);
@@ -941,27 +965,62 @@ export async function renderList(
     window.setTimeout(() => {
       handle.el.classList.remove("squawk-row--tremble");
       trembling.delete(movedId);
-      if (!handle.el.isConnected) return; // the view went away meanwhile
+      // The view went away meanwhile (a deleted row is not that: the others still settle).
+      if (!stack.isConnected) return;
+      // Text may have started being edited during the tremble: wait for that to end too.
+      if (isEditing(handle)) {
+        settleAfterEdit(handle);
+        return;
+      }
       // Recompute: the model may have changed again during the tremble.
       flipReorder(wantedOrder(currentOrder()), true);
+      markSettled();
     }, TREMBLE_MS);
+  }
+
+  /** The row's text is being edited: moving it now would pull the text away from the typist. */
+  function isEditing(handle: RowHandle): boolean {
+    return document.activeElement === handle.input && handle.input.dataset.viMode === "edit";
+  }
+
+  /** Settle the order once this row's edit ends, queueing that at most once. */
+  function settleAfterEdit(handle: RowHandle): void {
+    if (blurWaiting.has(handle.input)) return;
+    blurWaiting.add(handle.input);
+    handle.input.addEventListener(
+      "blur",
+      () => {
+        blurWaiting.delete(handle.input);
+        settleOrder();
+      },
+      { once: true },
+    );
   }
 
   function settleOrder(): void {
     if (trembling.size > 0) return; // the running animation settles the order when it ends
     const current = currentOrder();
     const desired = wantedOrder(current);
-    const movedId = findMovedId(current, desired);
-    if (movedId === null) {
-      // Several rows are out of place (or none): reorder at once, no animation.
+    // The row that just changed is the one whose state differs from when the order last
+    // settled. Naming it matters: two neighbours that swap are each "the one out of place".
+    const changed = current.filter((sid) => {
+      const was = settledState.get(sid);
+      return was !== undefined && was !== model.get(sid)!.state;
+    });
+    const movedId =
+      changed.length === 1 ? findMovedId(current, desired, changed[0]) : null;
+    if (movedId === null || movedId !== changed[0]) {
+      // Nothing out of place, or a row inserted, or several changes at once: reorder at
+      // once, no animation.
       if (current.some((sid, i) => sid !== desired[i])) flipReorder(desired, false);
+      markSettled();
       return;
     }
     const handle = rowHandles.get(movedId);
     if (!handle) return;
     // Don't pull a row away from text being edited: settle when the edit ends.
-    if (document.activeElement === handle.input && handle.input.dataset.viMode === "edit") {
-      handle.input.addEventListener("blur", () => settleOrder(), { once: true });
+    if (isEditing(handle)) {
+      settleAfterEdit(handle);
       return;
     }
     sinkRow(handle, movedId);
