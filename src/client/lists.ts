@@ -725,7 +725,8 @@ export function renderLists(container: HTMLElement): void {
       // Add lists created while offline (addList de-dupes anything already shown),
       // and repaint the stats of the ones already shown, unless a newer response has.
       const paint = claimPaint(gen);
-      for (const l of fresh) {
+      // Oldest-first, because addList prepends and `fresh` is most-recent-first (#167).
+      for (const l of [...fresh].reverse()) {
         addList(l);
         if (paint) statsPainters.get(l.id)?.(l);
       }
@@ -743,7 +744,9 @@ export function renderLists(container: HTMLElement): void {
 
   void getLists()
     .then((lists) => {
-      for (const list of lists) {
+      // The API returns most recently changed first (#167) and addList prepends,
+      // so feed it oldest-first to land the same order on screen.
+      for (const list of [...lists].reverse()) {
         addList(list);
       }
       syncEmpty();

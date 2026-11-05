@@ -281,6 +281,62 @@ export function cycleState(
 }
 
 // ---------------------------------------------------------------------------
+// Row order (#167): open first, then the rest, each group newest first
+// ---------------------------------------------------------------------------
+
+/** What the row order depends on. */
+export interface OrderItem {
+  id: number;
+  state: SquawkState;
+  seq: number;
+}
+
+/** The ids in display order: open squawks first, then the rest, each by `seq` descending. */
+export function desiredOrder(items: readonly OrderItem[]): number[] {
+  return [...items]
+    .sort((a, b) => {
+      const ao = a.state === "open" ? 0 : 1;
+      const bo = b.state === "open" ? 0 : 1;
+      return ao !== bo ? ao - bo : b.seq - a.seq;
+    })
+    .map((i) => i.id);
+}
+
+/**
+ * Where `moved` belongs among the other rows (`order`, in their current display
+ * order, with or without `moved` in it): the index it takes once it is out of the way.
+ */
+export function targetIndex(order: readonly OrderItem[], moved: OrderItem): number {
+  const rest = order.filter((i) => i.id !== moved.id);
+  return desiredOrder([...rest, moved]).indexOf(moved.id);
+}
+
+/**
+ * The one row that is out of place: the id whose removal makes the current order
+ * match the desired one. Null when the order is already right, or when more than
+ * one row is out of place (the caller then reorders everything without animation).
+ */
+export function findMovedId(
+  current: readonly number[],
+  desired: readonly number[],
+): number | null {
+  if (current.length === desired.length && current.every((v, i) => v === desired[i])) {
+    return null;
+  }
+  for (const id of current) {
+    const c = current.filter((v) => v !== id);
+    const d = desired.filter((v) => v !== id);
+    if (c.length === d.length && c.every((v, i) => v === d[i])) return id;
+  }
+  return null;
+}
+
+/** The tremble lasts this long before the row sinks (or rises) into place. */
+export const TREMBLE_MS = 1000;
+/** The slide into place. */
+const SINK_MS = 350;
+
+// ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
 
@@ -370,8 +426,12 @@ export async function renderList(
   };
   paintChanged();
   header.append(title, counts, changedBadge);
-  const updateCounts = (): void =>
+  // Runs on every model change (a local state change, a remote update, an insert), so
+  // it is also where a row that no longer belongs where it is gets moved (#167).
+  const updateCounts = (): void => {
     renderCounts(counts, countByState(model.values()));
+    settleOrder();
+  };
 
   // --- Mode state ---
   type Mode = "nav" | "edit";
@@ -800,6 +860,111 @@ export async function renderList(
       handle.setText(squawk.text);
     }
     updateCounts();
+  }
+
+  // --- Row order (#167): open first; a changed row trembles, then sinks or rises ---
+  /** Rows whose tremble is running. While any is, the order is left alone. */
+  const trembling = new Set<number>();
+
+  function squawkRows(): HTMLElement[] {
+    return Array.from(stack.querySelectorAll<HTMLElement>("[data-squawk-id]"));
+  }
+
+  /** Row ids in display order, leaving out any row the model no longer knows. */
+  function currentOrder(): number[] {
+    return squawkRows()
+      .map((r) => Number(r.dataset.squawkId))
+      .filter((sid) => model.has(sid));
+  }
+
+  function wantedOrder(ids: number[]): number[] {
+    return desiredOrder(ids.map((sid) => model.get(sid)!));
+  }
+
+  /** Put the rows in `desired` order, right after the entry row. */
+  function reorderRows(desired: number[]): void {
+    let anchor: HTMLElement = newRow.el;
+    for (const sid of desired) {
+      const el = rowHandles.get(sid)?.el;
+      if (!el) continue;
+      anchor.insertAdjacentElement("afterend", el);
+      anchor = el;
+    }
+  }
+
+  /**
+   * Reorder, and (when `animate`) slide every row that moved from where it was to
+   * where it is now: measure, move, invert with a transform, then let it go.
+   */
+  function flipReorder(desired: number[], animate: boolean): void {
+    // Moving a DOM node drops its focus, so put it back.
+    const active = document.activeElement as HTMLElement | null;
+    const rows = squawkRows();
+    const first = new Map(rows.map((r) => [r, r.getBoundingClientRect().top]));
+    reorderRows(desired);
+    if (active && active.isConnected && document.activeElement !== active) {
+      active.focus({ preventScroll: true });
+    }
+    if (!animate) return;
+    const moving: HTMLElement[] = [];
+    for (const r of rows) {
+      const dy = first.get(r)! - r.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) continue;
+      r.style.transition = "none";
+      r.style.transform = `translateY(${dy}px)`;
+      moving.push(r);
+    }
+    if (moving.length === 0) return;
+    void stack.offsetHeight; // commit the inverted position before releasing it
+    requestAnimationFrame(() => {
+      for (const r of moving) {
+        r.style.transition = `transform ${SINK_MS}ms ease`;
+        r.style.transform = "";
+        const done = (): void => {
+          r.style.transition = "";
+          r.removeEventListener("transitionend", done);
+        };
+        r.addEventListener("transitionend", done);
+      }
+    });
+  }
+
+  /** The row `movedId` is out of place: tremble for TREMBLE_MS, then sink or rise. */
+  function sinkRow(handle: RowHandle, movedId: number): void {
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+    if (reduce) {
+      flipReorder(wantedOrder(currentOrder()), false);
+      return;
+    }
+    trembling.add(movedId);
+    handle.el.classList.add("squawk-row--tremble");
+    window.setTimeout(() => {
+      handle.el.classList.remove("squawk-row--tremble");
+      trembling.delete(movedId);
+      if (!handle.el.isConnected) return; // the view went away meanwhile
+      // Recompute: the model may have changed again during the tremble.
+      flipReorder(wantedOrder(currentOrder()), true);
+    }, TREMBLE_MS);
+  }
+
+  function settleOrder(): void {
+    if (trembling.size > 0) return; // the running animation settles the order when it ends
+    const current = currentOrder();
+    const desired = wantedOrder(current);
+    const movedId = findMovedId(current, desired);
+    if (movedId === null) {
+      // Several rows are out of place (or none): reorder at once, no animation.
+      if (current.some((sid, i) => sid !== desired[i])) flipReorder(desired, false);
+      return;
+    }
+    const handle = rowHandles.get(movedId);
+    if (!handle) return;
+    // Don't pull a row away from text being edited: settle when the edit ends.
+    if (document.activeElement === handle.input && handle.input.dataset.viMode === "edit") {
+      handle.input.addEventListener("blur", () => settleOrder(), { once: true });
+      return;
+    }
+    sinkRow(handle, movedId);
   }
 
   // --- New-row keyboard handling (always in "insert" mode) ---

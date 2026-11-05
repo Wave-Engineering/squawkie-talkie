@@ -7,6 +7,18 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Changed
+- **Open squawks float to the top of a list, and the lists page leads with the list that changed
+  most recently** (#167). An item list now shows open squawks first (the ones that need redress),
+  then the rest, each group newest first; the lists page orders lists by `last_activity`
+  (ties: the newer list first). Both come from the API, so `sqtk show` and the lists output follow
+  the same order.
+- **A squawk whose state changes trembles for one second, then sinks (or rises) into its new
+  place** (#167), for a change made here and for one made by another viewer. The other rows slide
+  by one slot. A row whose text is being edited waits until the edit ends. With
+  `prefers-reduced-motion: reduce` the row just moves. There is no bulk delete: a "Purge" control
+  was considered and dropped because it would delete verdicts an agent may not have read.
+
 ## [0.13.0] — 2026-11-02 — sqtk marks the kind of an ask
 
 ### Added

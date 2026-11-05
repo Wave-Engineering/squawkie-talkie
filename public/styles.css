@@ -1416,3 +1416,50 @@ body {
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 229, 255, 0.4);
 }
+
+/* A squawk whose state just changed trembles for 1s (detail.ts TREMBLE_MS), then it
+   sinks or rises into its new place (#167). The shake dies away over the second. */
+.squawk-row--tremble {
+  animation: squawk-tremble 1s linear;
+}
+@keyframes squawk-tremble {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  8% {
+    transform: translateX(-2px);
+  }
+  16% {
+    transform: translateX(2px);
+  }
+  24% {
+    transform: translateX(-2px);
+  }
+  32% {
+    transform: translateX(2px);
+  }
+  40% {
+    transform: translateX(-1.5px);
+  }
+  48% {
+    transform: translateX(1.5px);
+  }
+  56% {
+    transform: translateX(-1px);
+  }
+  64% {
+    transform: translateX(1px);
+  }
+  76% {
+    transform: translateX(-0.5px);
+  }
+  88% {
+    transform: translateX(0.5px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .squawk-row--tremble {
+    animation: none;
+  }
+}
