@@ -22,6 +22,10 @@ export interface ListDetail extends ListWithStats {
 export interface SquawkPatch {
   text?: string;
   state?: SquawkState;
+  /** One of the squawk's answer options: resolves it as `confirmed` with that choice (#168). */
+  choice?: string;
+  /** The reader's one-way note (#168). */
+  note?: string;
 }
 
 /**
@@ -99,15 +103,19 @@ export function createSquawk(
   });
 }
 
-/** PATCH /api/squawks/:id — update a squawk's text and/or state. */
+/**
+ * PATCH /api/squawks/:id — update a squawk's text, state, choice and/or note. `initials`
+ * records who made the change; leave it out for a change that is not one to the item (a
+ * note), so the recorder stays as it was.
+ */
 export function updateSquawk(
   id: number,
   patch: SquawkPatch,
-  initials: string,
+  initials?: string,
 ): Promise<Squawk> {
   return request<Squawk>(`/api/squawks/${id}`, {
     method: "PATCH",
-    body: JSON.stringify({ ...patch, initials }),
+    body: JSON.stringify(initials === undefined ? patch : { ...patch, initials }),
   });
 }
 

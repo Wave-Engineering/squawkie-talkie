@@ -224,7 +224,9 @@ test("migrateSquawkStates widens a legacy CHECK without losing rows, images or t
   db.query(
     "INSERT INTO squawk_images (squawk_id, position, mime, bytes, byte_size, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(2, 0, "image/png", bytes, bytes.byteLength, "t");
-  const before = db.query("SELECT * FROM squawks ORDER BY id").all();
+  // The columns the legacy table had; the rebuilt one also has #168's, checked below.
+  const legacyCols = "id, list_id, seq, text, state, initials, created_at, updated_at";
+  const before = db.query(`SELECT ${legacyCols} FROM squawks ORDER BY id`).all();
   expect(() =>
     db.query("UPDATE squawks SET state = 'confirmed' WHERE id = 1").run(),
   ).toThrow(/CHECK constraint failed/);
@@ -233,7 +235,11 @@ test("migrateSquawkStates widens a legacy CHECK without losing rows, images or t
 
   // Every row survives byte-for-byte, ids included, and the image was NOT
   // cascade-deleted by the DROP TABLE inside the rebuild.
-  expect(db.query("SELECT * FROM squawks ORDER BY id").all()).toEqual(before);
+  expect(db.query(`SELECT ${legacyCols} FROM squawks ORDER BY id`).all()).toEqual(before);
+  // The columns #168 added come out of the rebuild at their defaults.
+  expect(
+    db.query("SELECT DISTINCT options_json, choice, note FROM squawks").all(),
+  ).toEqual([{ options_json: null, choice: null, note: "" }]);
   const img = db
     .query("SELECT squawk_id, bytes FROM squawk_images")
     .all() as Array<{ squawk_id: number; bytes: Uint8Array }>;

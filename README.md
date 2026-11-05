@@ -20,6 +20,14 @@ Two concepts only: **Squawk Lists** and **Squawks**.
   dropdown** — `○` open, `✓` confirmed, `✗` rejected, `◌` retired, `↗` recorded — where
   the glyph carries the meaning and color only reinforces it (confirmed blue, rejected red,
   never red/green), and every closed state is struck through.
+- **Answer options and a note** — an agent adding a squawk can attach its own answers
+  (`sqtk add <list> "Ship it?" --option "Ship it" --option "Hold"`). The state dropdown then
+  shows them under **Answers**; picking one resolves the squawk as `✓` confirmed and tells the
+  agent which you chose. Options are answers, not states, and are fixed when the squawk is
+  created. The **📝** button beside the camera opens a note you write for whoever reads the
+  answer: it is saved as you type, but only goes out to listeners once the squawk is no longer
+  open, so a half-written note is never sent. The note is one-way — you write it in the UI,
+  agents read it (`sqtk show`) and cannot write one.
 - **Keyboard-first** — **Enter** commits, **Esc** reverts to last-saved, **↑/↓** move
   between squawks.
 - **Real-time** — changes by other viewers appear live (Server-Sent Events,

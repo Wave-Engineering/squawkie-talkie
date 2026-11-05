@@ -26,6 +26,7 @@
 
 import {
   MAX_IMAGES_PER_SQUAWK,
+  MAX_NOTE_LENGTH,
   SQUAWK_STATES,
   STATE_GLYPHS,
 } from "../server/types.ts";
@@ -337,6 +338,11 @@ export function findMovedId(
   }
   return null;
 }
+
+/** An answer option's value in the state dropdown, so it can never equal a state name (#168). */
+const ANSWER_PREFIX = "answer:";
+/** A note is saved this long after the last keystroke (and at once on blur or Escape). */
+const NOTE_SAVE_MS = 600;
 
 /** The tremble lasts this long before the row sinks (or rises) into place. */
 export const TREMBLE_MS = 1000;
@@ -715,9 +721,10 @@ export async function renderList(
     const sq = model.get(squawkId);
     if (!sq) return;
 
-    applyState(handle.el, newState);
+    // A plain state change clears any answer chosen (#168), here as on the server.
+    handle.setState(newState, null);
     handle.select.value = newState;
-    model.set(squawkId, { ...sq, state: newState });
+    model.set(squawkId, { ...sq, state: newState, choice: null });
     updateCounts();
 
     updateSquawk(squawkId, { state: newState }, initials)
@@ -863,11 +870,16 @@ export async function renderList(
     }
     seeSquawk(squawk);
     model.set(squawk.id, squawk);
-    handle.setState(squawk.state);
+    handle.setState(squawk.state, squawk.choice);
     handle.setRecorder(squawk.initials);
     handle.setImageIds(squawk.image_ids);
     if (applyToInput) {
       handle.setText(squawk.text);
+    }
+    // An open squawk's frame carries no note (a draft is never broadcast), so it says
+    // nothing about the note; only a squawk that is not open does (#168).
+    if (squawk.state !== "open") {
+      handle.setNote(squawk.note ?? "");
     }
     updateCounts();
   }
@@ -1107,6 +1119,8 @@ export async function renderList(
     if (document.activeElement === newRow.input) return;
     // Don't intercept when overlay is showing
     if (overlayEl) return;
+    // A note box takes plain typing: its keys are text, not vi commands (#168).
+    if (event.target instanceof HTMLTextAreaElement) return;
 
     if (mode === "nav") {
       handleNavKey(event);
@@ -1369,7 +1383,14 @@ interface RowHandle {
   input: HTMLInputElement;
   select: HTMLSelectElement;
   setText(text: string): void;
-  setState(state: SquawkState): void;
+  /** Reflect a state and, for `confirmed`, the answer option chosen (#168). */
+  setState(state: SquawkState, choice?: string | null): void;
+  /**
+   * Reflect a note from the server (#168). Skipped while the textarea has focus, like
+   * the text box; the caller passes only notes from a squawk that is not open, since an
+   * open squawk's SSE frame carries no note.
+   */
+  setNote(note: string): void;
   setRecorder(initials: string): void;
   /**
    * Reflect a new ordered image-id list onto the row: the thumbnail (first id),
@@ -1481,6 +1502,18 @@ function buildSquawkRow(
   });
   input.addEventListener("blur", () => save.flush());
 
+  // The squawk's own answer options (#168) follow the five states in the dropdown.
+  // They are answers, not states: picking one confirms the squawk and records its
+  // label, so the `value` carries a prefix no state name has and the row's state stays
+  // one of the five.
+  const answerOptions = squawk.options ?? [];
+  let choice: string | null = squawk.choice ?? null;
+  /** The dropdown value for a state: a chosen answer shows as that answer. */
+  const valueFor = (state: SquawkState): string =>
+    state === "confirmed" && choice !== null && answerOptions.includes(choice)
+      ? ANSWER_PREFIX + choice
+      : state;
+
   const select = document.createElement("select");
   select.className = "squawk-row__state";
   select.setAttribute("aria-label", `State of squawk ${squawk.seq}`);
@@ -1488,18 +1521,39 @@ function buildSquawkRow(
     const option = document.createElement("option");
     option.value = state;
     option.textContent = `${STATE_GLYPHS[state]} ${state}`;
-    option.selected = state === squawk.state;
     select.append(option);
   }
+  if (answerOptions.length > 0) {
+    const group = document.createElement("optgroup");
+    group.label = "Answers";
+    for (const label of answerOptions) {
+      const option = document.createElement("option");
+      option.value = ANSWER_PREFIX + label;
+      // Beside the confirmed glyph: the answer is what resolved the item.
+      option.textContent = `${STATE_GLYPHS.confirmed} ${label}`;
+      group.append(option);
+    }
+    select.append(group);
+  }
+  /** A chosen answer shows as written, not capitalised like a state name. */
+  const paintAnswered = (): void => {
+    select.classList.toggle("squawk-row__state--answer", select.value.startsWith(ANSWER_PREFIX));
+  };
+  select.value = valueFor(squawk.state);
+  paintAnswered();
   select.addEventListener("change", () => {
-    const state = select.value as SquawkState;
+    const picked = select.value;
+    const isAnswer = picked.startsWith(ANSWER_PREFIX);
+    const state: SquawkState = isAnswer ? "confirmed" : (picked as SquawkState);
+    choice = isAnswer ? picked.slice(ANSWER_PREFIX.length) : null;
+    paintAnswered();
     applyState(row, state);
     const current = model.get(squawk.id);
     if (current) {
-      model.set(squawk.id, { ...current, state });
+      model.set(squawk.id, { ...current, state, choice });
     }
     onChange();
-    updateSquawk(squawk.id, { state }, initials)
+    updateSquawk(squawk.id, choice !== null ? { choice } : { state }, initials)
       .then((updated) => {
         markSeen(listId, updated.updated_at); // the reader's own change is seen
         model.set(updated.id, updated);
@@ -1599,10 +1653,72 @@ function buildSquawkRow(
     });
   });
 
-  imageCell.append(attachBtn, thumbBtn);
+  // --- Note (#168): the reader's one-way note, shown beside the camera button ---
+  // The UI user writes it and API clients read it when the item is disposed. It is saved
+  // while the item is still open, but no SSE frame carries it until then, so a draft is
+  // never broadcast. The textarea is not an <input>: a row keeps exactly one of those.
+  const noteBtn = document.createElement("button");
+  noteBtn.type = "button";
+  noteBtn.className = "squawk-row__note-btn";
+  noteBtn.textContent = "📝";
+  noteBtn.setAttribute("aria-label", "Edit note");
+  noteBtn.setAttribute("aria-expanded", "false");
+
+  const noteArea = document.createElement("textarea");
+  noteArea.className = "squawk-row__note";
+  noteArea.hidden = true;
+  noteArea.rows = 3;
+  noteArea.maxLength = MAX_NOTE_LENGTH;
+  noteArea.placeholder = "A note for whoever reads the answer";
+  noteArea.setAttribute("aria-label", `Note on squawk ${squawk.seq}`);
+  noteArea.value = squawk.note ?? "";
+
+  let lastSavedNote = noteArea.value;
+  /** A dot on the button says there is a note, whether or not the box is open. */
+  const paintNoteDot = (): void => {
+    noteBtn.classList.toggle("squawk-row__note-btn--has", noteArea.value.length > 0);
+  };
+  paintNoteDot();
+
+  const saveNote = debounce(() => {
+    const note = noteArea.value;
+    if (note === lastSavedNote) return;
+    // No initials: a note is not a change to the item, so it leaves the recorder alone.
+    updateSquawk(squawk.id, { note })
+      .then(() => {
+        lastSavedNote = note;
+      })
+      .catch((err) => console.error("note save failed", err));
+  }, NOTE_SAVE_MS);
+
+  const setNoteOpen = (open: boolean): void => {
+    noteArea.hidden = !open;
+    noteBtn.setAttribute("aria-expanded", String(open));
+    if (open) {
+      noteArea.focus();
+    }
+  };
+  noteBtn.addEventListener("click", () => setNoteOpen(noteArea.hidden));
+  noteArea.addEventListener("input", () => {
+    paintNoteDot();
+    saveNote();
+  });
+  noteArea.addEventListener("blur", () => saveNote.flush());
+  noteArea.addEventListener("keydown", (event) => {
+    // Escape closes the box and keeps what was typed (it is saved on the way out).
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      saveNote.flush();
+      setNoteOpen(false);
+      noteBtn.focus();
+    }
+  });
+
+  imageCell.append(noteBtn, attachBtn, thumbBtn);
   renderImage();
 
-  row.append(seq, body, select, recorder, imageCell);
+  row.append(seq, body, select, recorder, imageCell, noteArea);
 
   return {
     el: row,
@@ -1613,11 +1729,19 @@ function buildSquawkRow(
       lastSaved = text;
       showText(text);
     },
-    setState: (state: SquawkState): void => {
+    setState: (state: SquawkState, newChoice: string | null = null): void => {
+      choice = newChoice;
       applyState(row, state);
       if (document.activeElement !== select) {
-        select.value = state;
+        select.value = valueFor(state);
+        paintAnswered();
       }
+    },
+    setNote: (note: string): void => {
+      if (document.activeElement === noteArea) return;
+      noteArea.value = note;
+      lastSavedNote = note;
+      paintNoteDot();
     },
     setRecorder: (init: string): void => setRecorderText(recorder, init),
     setImageIds: (ids: number[]): void => {
