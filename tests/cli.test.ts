@@ -911,3 +911,79 @@ test("the ask-marker table is one ASK_ICONS array, and help documents the kinds 
     expect(usage).toContain(s);
   }
 });
+
+// --- answer options and notes (#168) -----------------------------------------
+
+/** The squawk as the API returns it, with the #168 fields. */
+type WireAnswered = WireSquawk & { options: string[]; choice: string | null; note: string };
+
+async function patchSquawk(id: number, body: unknown): Promise<Response> {
+  return fetch(`${BASE}/api/squawks/${id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+test("add --option sends the answer choices, and show lists them on an open squawk (#168)", async () => {
+  const r = sqtk(
+    "add", "answers-a", "Ship the release?", "--no-prefix",
+    "--option", "Ship it", "--option", "Hold", "--option", "Ask the vendor",
+  );
+  expect(r.code).toBe(0);
+  const sq = (await squawk("answers-a", 1)) as WireAnswered;
+  expect(sq.options).toEqual(["Ship it", "Hold", "Ask the vendor"]);
+  expect(sq.choice).toBeNull();
+
+  const shown = sqtk("show", "answers-a").out;
+  expect(shown).toContain("○ [open] Ship the release?");
+  expect(shown).toContain("      options: Ship it | Hold | Ask the vendor");
+
+  // An add with no --option sends none, and show prints no options line for it.
+  expect(sqtk("add", "answers-b", "Plain ask", "--no-prefix").code).toBe(0);
+  expect(((await squawk("answers-b", 1)) as WireAnswered).options).toEqual([]);
+  expect(sqtk("show", "answers-b").out).not.toContain("options:");
+});
+
+test("show prints a disposed squawk's choice and note, and hides a draft note on an open one (#168)", async () => {
+  expect(sqtk("add", "answers-c", "Which way?", "--no-prefix", "--option", "Left", "--option", "Right").code).toBe(0);
+  const sq = (await squawk("answers-c", 1)) as WireAnswered;
+
+  // A note written while the item is open is a draft: saved, but not shown.
+  expect((await patchSquawk(sq.id, { note: "mind the cliff" })).status).toBe(200);
+  const open = sqtk("show", "answers-c").out;
+  expect(open).toContain("options: Left | Right");
+  expect(open).not.toContain("mind the cliff");
+
+  // Once the reader picks an answer, the choice and the note show.
+  expect((await patchSquawk(sq.id, { choice: "Right" })).status).toBe(200);
+  const done = sqtk("show", "answers-c").out;
+  expect(done).toContain("✓ [confirmed] Which way?");
+  expect(done).toContain("      choice: Right");
+  expect(done).toContain("      note: mind the cliff");
+  expect(done).not.toContain("options:");
+  expect(sqtk("show", "answers-c", "--json").out).toContain('"choice": "Right"');
+
+  // A multi-line note keeps its lines under the label.
+  expect((await patchSquawk(sq.id, { note: "line one\nline two" })).status).toBe(200);
+  expect(sqtk("show", "answers-c").out).toMatch(/note: line one\n {12}line two/);
+});
+
+test("add --option with a bad label is refused by the server and creates nothing (#168)", async () => {
+  const r = sqtk("add", "answers-d", "Bad options", "--no-prefix", "--option", "open");
+  expect(r.code).not.toBe(0);
+  expect(r.err).toMatch(/state name/);
+  // A needs-an-argument slip is refused up front.
+  const slip = sqtk("add", "answers-d", "x", "--no-prefix", "--option");
+  expect(slip.code).toBe(2);
+  expect(slip.err).toMatch(/--option needs a label/);
+});
+
+test("sqtk has no way to write a note, and help documents --option (#168)", () => {
+  expect(sqtk("add", "answers-e", "x", "--no-prefix").code).toBe(0);
+  const attempt = sqtk("set", "answers-e", "1", "--note", "from a script");
+  expect(attempt.code).not.toBe(0);
+  const usage = sqtk("help").err;
+  expect(usage).toContain('--option "<label>"');
+  expect(usage).not.toMatch(/--note/);
+});

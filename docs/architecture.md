@@ -53,6 +53,22 @@ lists                              squawks                          squawk_image
   JSON or an SSE frame; the public squawk carries a derived ordered **`image_ids`** list (and a
   **`has_image`** boolean derived from it) and clients lazy-load
   `GET /api/squawks/:id/images/:id` per id.
+- **Answer options, a choice and a note (#168)** — three columns on `squawks`, added to an
+  existing database by a guarded `ALTER TABLE` (`migrateSquawkColumns`): `options_json`
+  (a JSON array of at most 8 labels, or NULL), `choice` (the label picked, or NULL) and `note`
+  (text, default `''`). The public squawk carries them as `options: string[]`,
+  `choice: string | null` and `note: string`. **Options are answers, not states**: the five
+  states stay the single source of truth, so picking an option sets `state = confirmed` and
+  stores the label in `choice`; counts, glyphs and the open-first order are untouched. Options
+  are set at create and never change. Any plain state change clears the `choice`. The
+  **note** is the reader's one-way channel: written in the UI, read by API clients. A note-only
+  PATCH leaves `updated_at` alone, since a draft is not a change to the item.
+- **A note rides an SSE frame only once the item is disposed** — `forEvent()` in `api.ts`
+  empties the `note` of every `squawk.created` / `squawk.updated` frame while the squawk is
+  `open`, so a half-written note is never broadcast; the REST responses are the item's own
+  record and are not redacted. A client therefore ignores the note in a frame for an open
+  squawk. A PATCH carrying a `note` and an `Authorization` header is refused (403) when an API
+  token is configured; that is a guard where the server can tell, not a security boundary.
 - **`next_seq` is internal** — `api.ts` `publicList()` strips it before any response.
 
 ## Realtime
@@ -99,9 +115,9 @@ All responses JSON. Invalid input → `400 {error}`; unknown list/squawk → `40
 | GET | `/api/lists/by-name?name=…` | — | same shape as by-id, looked up by **exact name** (oldest match — names aren't unique); `400` if `name` missing, `404` if none |
 | DELETE | `/api/lists/:id` | — | `{ ok: true }` (cascades squawks) |
 | GET | `/api/lists/:id/squawks` | — | `Squawk[]` |
-| POST | `/api/lists/:id/squawks` | `{ text, initials }` | `201 Squawk` |
-| POST | `/api/squawks` | `{ list_name, text, initials }` | `201 Squawk` — quick-add by list name (creates the list if absent); `400` on bad input |
-| PATCH | `/api/squawks/:id` | `{ text?, state?, initials? }` | `200 Squawk` (needs `text` or `state`) |
+| POST | `/api/lists/:id/squawks` | `{ text, initials, options? }` | `201 Squawk` — `options` are up to 8 answer labels (1–40 chars, no duplicates, none a state name); `400` on bad ones or on a `note` |
+| POST | `/api/squawks` | `{ list_name, text, initials, options? }` | `201 Squawk` — quick-add by list name (creates the list if absent); `400` on bad input |
+| PATCH | `/api/squawks/:id` | `{ text?, state?, choice?, note?, initials? }` | `200 Squawk` (needs one of `text`, `state`, `choice`, `note`). `choice` must be one of the squawk's options and resolves it as `confirmed`; give it instead of `state`. `options` are refused (`400`). `note` is at most 4000 chars; with an `Authorization` header and a configured token it is `403` |
 | DELETE | `/api/squawks/:id` | — | `{ ok: true }` — the **one direct** squawk true-delete; its sole caller is the editor `u` undo, retracting a just-created squawk within the settle-in window (`404` if unknown). Every other individual-squawk transition is a state change; whole-list deletion cascades separately via `DELETE /api/lists/:id`. |
 | POST | `/api/squawks/:id/images` | raw image bytes; `Content-Type: image/jpeg` \| `image/png` \| `image/webp` | `200 Squawk` — **append** one image (up to 5, ordered by upload); `404` unknown squawk, `415` type not in the raster allowlist, `409` already at the 5-image cap, `413` over the ~2 MB cap, `400` empty body |
 | GET | `/api/squawks/:id/images/:id` | — | one stored image's bytes with its stored raster `Content-Type` (never `text/html` / `image/svg+xml`); `404` if the id isn't on that squawk |

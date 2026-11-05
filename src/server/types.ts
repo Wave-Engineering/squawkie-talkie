@@ -44,6 +44,13 @@ export const STATE_GLYPHS: Readonly<Record<SquawkState, string>> = {
  */
 export const MAX_IMAGES_PER_SQUAWK = 5;
 
+/** At most this many answer options on one squawk (#168). */
+export const MAX_OPTIONS_PER_SQUAWK = 8;
+/** An answer option is 1 to this many characters, once trimmed. */
+export const MAX_OPTION_LENGTH = 40;
+/** A note is at most this many characters (#168). */
+export const MAX_NOTE_LENGTH = 4000;
+
 /** A named list. `next_seq` is the next per-list squawk number to allocate. */
 export interface List {
   id: number;
@@ -76,6 +83,13 @@ export interface ListWithStats extends List {
  * consumers. Image bytes are never inlined here — clients lazy-load
  * `GET /api/squawks/:id/images/:imageId` per id (bytes must never ride the
  * squawk JSON or an SSE frame).
+ *
+ * `options`, `choice` and `note` are #168. `options` are answer CHOICES the
+ * creator attached, not new states: picking one sets `state = confirmed` and
+ * stores its label in `choice`, so the five states stay the single source of
+ * truth. Options are fixed at create. `note` is the reader's one-way note: it is
+ * written in the UI and read by API clients, and an SSE frame carries it only
+ * once the squawk is no longer `open`.
  */
 export interface Squawk {
   id: number;
@@ -88,4 +102,7 @@ export interface Squawk {
   updated_at: string;
   has_image: boolean;
   image_ids: number[];
+  options: string[];
+  choice: string | null;
+  note: string;
 }

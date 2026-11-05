@@ -7,6 +7,22 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **A squawk can carry answer options, and the reader can leave a note** (#168).
+  - **Options:** `POST` a squawk (or `sqtk add --option "<label>"`, repeatable) with up to 8
+    answer labels. The state dropdown shows them under **Answers**; picking one sets the squawk
+    `confirmed` and records the label as its `choice`, which `PATCH` also accepts and the update
+    event carries. Options are answers, not states: counts, glyphs and the five-state check are
+    unchanged. They are fixed at create (a `PATCH` carrying `options` is refused), and any plain
+    state change clears the `choice`.
+  - **Note:** a 📝 button beside the camera opens a textarea, saved as you type. The `note` is
+    returned by `GET`, and rides an update event only once the squawk is no longer `open`, so a
+    draft is never broadcast. It is one-way: a `PATCH` with a note and an `Authorization` header
+    is refused (`403`) when an API token is configured, and the CLI has no way to write one.
+    `sqtk show` prints an open squawk's options, and a disposed one's `choice` and `note`.
+  - An existing database gains three columns (`options_json`, `choice`, `note`) on first start,
+    with no change to its rows.
+
 ### Changed
 - **Open squawks float to the top of a list, and the lists page leads with the list that changed
   most recently** (#167). An item list now shows open squawks first (the ones that need redress),

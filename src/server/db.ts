@@ -35,9 +35,23 @@ function squawksTableSql(name: string): string {
       state TEXT NOT NULL DEFAULT 'open' CHECK(state IN (${states})),
       initials TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      options_json TEXT,
+      choice TEXT,
+      note TEXT NOT NULL DEFAULT ''
     )`;
 }
+
+/**
+ * The columns #168 added to `squawks`, each with the definition `ALTER TABLE`
+ * needs. A table created before them gains them in place (`migrateSquawkColumns`);
+ * a fresh one has them from `squawksTableSql`.
+ */
+const SQUAWK_ADDED_COLUMNS: ReadonlyArray<readonly [name: string, ddl: string]> = [
+  ["options_json", "options_json TEXT"],
+  ["choice", "choice TEXT"],
+  ["note", "note TEXT NOT NULL DEFAULT ''"],
+];
 
 /**
  * Lazily-opened shared connection. The DB is NOT opened at import time: the
@@ -69,6 +83,8 @@ export function getDb(): Database {
   // An existing DB keeps the CHECK it was created with (CREATE IF NOT EXISTS is a
   // no-op over it), so widen it in place when it predates a state (#137).
   migrateSquawkStates(db);
+  // A table that predates answer options, choices and notes (#168) gains them in place.
+  migrateSquawkColumns(db);
   // squawk_images owns its own lifecycle below: the 1:N schema plus a one-time,
   // self-detecting migration from the legacy 1:1 table (squawk_id as PK). Kept
   // out of the block above so the migration can rebuild an existing table before
@@ -117,8 +133,19 @@ export function migrateSquawkStates(db: Database): void {
       db.exec(`
         DROP TABLE IF EXISTS squawks_new;
         ${squawksTableSql("squawks_new")};
-        INSERT INTO squawks_new (id, list_id, seq, text, state, initials, created_at, updated_at)
-          SELECT id, list_id, seq, text, state, initials, created_at, updated_at FROM squawks;
+      `);
+      // Copy every column both tables have, so a rebuild never drops data that a
+      // later column (options, choice, note: #168) holds in the old table.
+      const columnsOf = (table: string): string[] =>
+        (db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
+          (c) => c.name,
+        );
+      const oldCols = new Set(columnsOf("squawks"));
+      const shared = columnsOf("squawks_new")
+        .filter((c) => oldCols.has(c))
+        .join(", ");
+      db.exec(`
+        INSERT INTO squawks_new (${shared}) SELECT ${shared} FROM squawks;
         DROP TABLE squawks;
         ALTER TABLE squawks_new RENAME TO squawks;
       `);
@@ -140,6 +167,25 @@ export function migrateSquawkStates(db: Database): void {
     if (fkWasOn) {
       db.exec("PRAGMA foreign_keys = ON");
     }
+  }
+}
+
+/**
+ * Ensure `squawks` has the columns #168 added: `options_json`, `choice` and
+ * `note`. Each is nullable or defaulted, so `ALTER TABLE ... ADD COLUMN` is all it
+ * takes and no existing row changes (a note reads as `''`, options as none).
+ *
+ * Idempotent and self-detecting, in the style of {@link migrateSquawkImages}: it
+ * probes `PRAGMA table_info` and adds only what is missing, so a fresh table (which
+ * already has them) and an already-migrated one are no-ops. Exported so a
+ * pre-migration fixture can be tested against a throwaway connection.
+ */
+export function migrateSquawkColumns(db: Database): void {
+  const cols = db.query("PRAGMA table_info(squawks)").all() as Array<{ name: string }>;
+  if (cols.length === 0) return; // no squawks table yet
+  const have = new Set(cols.map((c) => c.name));
+  for (const [name, ddl] of SQUAWK_ADDED_COLUMNS) {
+    if (!have.has(name)) db.exec(`ALTER TABLE squawks ADD COLUMN ${ddl}`);
   }
 }
 
@@ -324,7 +370,10 @@ export function deleteList(id: number): boolean {
  * `has_image` flag derived from it) on top; DB helpers project a `SquawkRow` up
  * to a `Squawk` by attaching those from a lookup against `squawk_images`.
  */
-type SquawkRow = Omit<Squawk, "has_image" | "image_ids">;
+type SquawkRow = Omit<Squawk, "has_image" | "image_ids" | "options"> & {
+  /** The answer options as stored: a JSON array of strings, or NULL for none (#168). */
+  options_json: string | null;
+};
 
 /**
  * Correlated subquery yielding a JSON array of a squawk's image ids ordered by
@@ -335,11 +384,17 @@ type SquawkRow = Omit<Squawk, "has_image" | "image_ids">;
 const IMAGE_IDS_JSON_SELECT =
   "(SELECT json_group_array(id) FROM (SELECT id FROM squawk_images WHERE squawk_id = squawks.id ORDER BY position ASC)) AS image_ids_json";
 
+/** Build the public `Squawk` from a stored row and its ordered image ids. */
+function toSquawk(row: SquawkRow, image_ids: number[]): Squawk {
+  const { options_json, ...rest } = row;
+  const options = options_json === null ? [] : (JSON.parse(options_json) as string[]);
+  return { ...rest, options, image_ids, has_image: image_ids.length > 0 };
+}
+
 /** Project a raw row (+ its `image_ids_json`) into the public `Squawk`. */
 function projectSquawk(row: SquawkRow & { image_ids_json: string }): Squawk {
   const { image_ids_json, ...rest } = row;
-  const image_ids = JSON.parse(image_ids_json) as number[];
-  return { ...rest, image_ids, has_image: image_ids.length > 0 };
+  return toSquawk(rest, JSON.parse(image_ids_json) as number[]);
 }
 
 /**
@@ -349,7 +404,12 @@ function projectSquawk(row: SquawkRow & { image_ids_json: string }): Squawk {
  * atomic. `next_seq` is advanced on allocation and never rolled back, so a
  * seq is never reused even if its squawk is later deleted.
  */
-type SquawkTx = (listId: number, text: string, initials: string) => Squawk;
+type SquawkTx = (
+  listId: number,
+  text: string,
+  initials: string,
+  options: readonly string[],
+) => Squawk;
 let squawkTx: SquawkTx | null = null;
 
 /** Build (once) the prepared transaction bound to the open connection. */
@@ -359,7 +419,12 @@ function getSquawkTx(): SquawkTx {
   }
   const db = getDb();
   squawkTx = db.transaction(
-    (listId: number, text: string, initials: string): Squawk => {
+    (
+      listId: number,
+      text: string,
+      initials: string,
+      options: readonly string[],
+    ): Squawk => {
       const seqRow = db
         .query(
           "UPDATE lists SET next_seq = next_seq + 1 WHERE id = ? RETURNING next_seq - 1 AS seq",
@@ -372,53 +437,102 @@ function getSquawkTx(): SquawkTx {
       const ts = now();
       const row = db
         .query(
-          `INSERT INTO squawks (list_id, seq, text, state, initials, created_at, updated_at)
-           VALUES (?, ?, ?, 'open', ?, ?, ?) RETURNING *`,
+          `INSERT INTO squawks (list_id, seq, text, state, initials, created_at, updated_at, options_json)
+           VALUES (?, ?, ?, 'open', ?, ?, ?, ?) RETURNING *`,
         )
-        .get(listId, seqRow.seq, text, initials, ts, ts) as SquawkRow;
+        .get(
+          listId,
+          seqRow.seq,
+          text,
+          initials,
+          ts,
+          ts,
+          options.length > 0 ? JSON.stringify(options) : null,
+        ) as SquawkRow;
       // A just-created squawk has no images yet; RETURNING can't carry a subquery.
-      return { ...row, image_ids: [], has_image: false };
+      return toSquawk(row, []);
     },
   );
   return squawkTx;
 }
 
+/**
+ * Create a squawk. `options` are its answer choices (#168), already validated by
+ * `validateOptions`; they are fixed here and never change afterwards.
+ */
 export function createSquawk(
   listId: number,
   text: string,
   initials: string,
+  options: readonly string[] = [],
 ): Squawk {
-  return getSquawkTx()(listId, text, initials);
+  return getSquawkTx()(listId, text, initials, options);
 }
 
+/** `updateSquawk` was given a `choice` that is not one of the squawk's options. */
+export class InvalidChoiceError extends Error {}
+
 /**
- * Update a squawk's `text` and/or `state` and refresh `updated_at`.
- * When `initials` is provided it records who made the change.
+ * Update a squawk's `text`, `state`, `choice` and/or `note`, and refresh
+ * `updated_at`. When `initials` is provided it records who made the change.
  * Throws if the squawk does not exist.
+ *
+ * A `choice` (#168) must be one of the squawk's own options, else it throws
+ * {@link InvalidChoiceError}; it resolves the squawk as `confirmed` with that label
+ * recorded. Any other `state` change clears the `choice`, so a recorded choice
+ * always belongs to the state it was made in. The caller gives `state` or `choice`,
+ * not both.
+ *
+ * A patch that changes only the `note` leaves `updated_at` alone: a draft note is
+ * not a change to the item, so it must not mark the list as active.
  */
 export function updateSquawk(
   id: number,
-  patch: { text?: string; state?: SquawkState },
+  patch: { text?: string; state?: SquawkState; choice?: string; note?: string },
   initials?: string,
 ): Squawk {
   const sets: string[] = [];
-  const params: (string | number)[] = [];
+  const params: (string | number | null)[] = [];
 
   if (patch.text !== undefined) {
     sets.push("text = ?");
     params.push(patch.text);
   }
-  if (patch.state !== undefined) {
-    sets.push("state = ?");
+  if (patch.choice !== undefined) {
+    const stored = getDb()
+      .query("SELECT options_json FROM squawks WHERE id = ?")
+      .get(id) as { options_json: string | null } | null;
+    if (!stored) {
+      throw new Error(`updateSquawk: squawk ${id} not found`);
+    }
+    const options = stored.options_json === null ? [] : (JSON.parse(stored.options_json) as string[]);
+    if (!options.includes(patch.choice)) {
+      throw new InvalidChoiceError(`"${patch.choice}" is not one of this squawk's options`);
+    }
+    sets.push("state = 'confirmed'", "choice = ?");
+    params.push(patch.choice);
+  } else if (patch.state !== undefined) {
+    sets.push("state = ?", "choice = NULL");
     params.push(patch.state);
+  }
+  if (patch.note !== undefined) {
+    sets.push("note = ?");
+    params.push(patch.note);
   }
   if (initials !== undefined) {
     sets.push("initials = ?");
     params.push(initials);
   }
 
-  sets.push("updated_at = ?");
-  params.push(now());
+  const noteOnly =
+    patch.note !== undefined &&
+    patch.text === undefined &&
+    patch.state === undefined &&
+    patch.choice === undefined;
+  if (!noteOnly) {
+    sets.push("updated_at = ?");
+    params.push(now());
+  }
   params.push(id);
 
   const row = getDb()
@@ -427,8 +541,7 @@ export function updateSquawk(
   if (!row) {
     throw new Error(`updateSquawk: squawk ${id} not found`);
   }
-  const image_ids = listSquawkImageIds(id);
-  return { ...row, image_ids, has_image: image_ids.length > 0 };
+  return toSquawk(row, listSquawkImageIds(id));
 }
 
 /** Return one squawk by id (with its derived `image_ids`), or null if absent. */

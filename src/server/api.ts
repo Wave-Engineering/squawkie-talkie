@@ -16,6 +16,14 @@
  *   POST   /api/lists/:id/squawks     -> createSquawk(id, text, init)   (201/404)
  *   POST   /api/squawks               -> quick-add by list name          (201/400)
  *   PATCH  /api/squawks/:id           -> updateSquawk(id, patch, init)  (200/404)
+ *
+ * Answer options and notes (#168). A create may carry `options` (up to 8 answer
+ * choices, fixed from then on). A PATCH may carry `choice` (one of those options:
+ * the squawk becomes `confirmed` with that choice, and any plain `state` change
+ * clears it) and `note` (written in the UI; refused with 403 from a client that
+ * presents an `Authorization` header while a token is configured). Every SSE
+ * `squawk.created` / `squawk.updated` frame carries an empty `note` while the
+ * squawk is `open`; the stored note rides once it is not.
  *   DELETE /api/squawks/:id           -> deleteSquawk(id)               (200/404)
  *
  * Invalid input yields 400 `{ error }`; unknown list/squawk yields 404.
@@ -34,14 +42,17 @@ import {
   getSquawkImageById,
   ImageLimitError,
   getListWithStats,
+  InvalidChoiceError,
   listListsWithStats,
   listSquawkImageIds,
   listSquawks,
   updateSquawk,
 } from "./db.ts";
+import { resolveApiToken } from "./auth.ts";
+import { OptionsError, validateOptions } from "./options.ts";
 import { broadcast } from "./sse.ts";
-import { MAX_IMAGES_PER_SQUAWK, SQUAWK_STATES } from "./types.ts";
-import type { ListWithStats, SquawkState } from "./types.ts";
+import { MAX_IMAGES_PER_SQUAWK, MAX_NOTE_LENGTH, SQUAWK_STATES } from "./types.ts";
+import type { ListWithStats, Squawk, SquawkState } from "./types.ts";
 
 /** The valid lifecycle states a squawk may be set to. */
 const VALID_STATES: ReadonlySet<string> = new Set<string>(SQUAWK_STATES);
@@ -60,6 +71,18 @@ function publicListById(id: number): PublicList {
   const list = getListWithStats(id);
   if (!list) throw new Error(`publicListById: list ${id} not found`);
   return publicList(list);
+}
+
+/**
+ * A squawk as an SSE frame carries it (#168). A note is a draft until the item is
+ * disposed, so while the squawk is `open` the frame carries an empty note and a
+ * half-written note is never broadcast; once it is not open, the stored note rides.
+ * Every `squawk.created` and `squawk.updated` broadcast goes through this, whatever
+ * changed (a state, an image). The REST responses are not redacted: they are the
+ * item's own record.
+ */
+export function forEvent(squawk: Squawk): Squawk {
+  return squawk.state === "open" ? { ...squawk, note: "" } : squawk;
 }
 
 /** Centralized JSON response helper. */
@@ -269,7 +292,29 @@ async function createListRoute(req: Request): Promise<Response> {
   return json(list, 201);
 }
 
-/** POST /api/lists/:id/squawks — body `{ text, initials }`. */
+/**
+ * The #168 fields a create request may carry: optional answer `options`, validated.
+ * A `note` is refused: it is written in the UI, once the item exists. Returns the
+ * options, or the 400 to send.
+ */
+function createExtras(body: Record<string, unknown>): string[] | Response {
+  if (body.note !== undefined) {
+    return json({ error: "notes are written in the UI, after the item exists" }, 400);
+  }
+  if (body.options === undefined) {
+    return [];
+  }
+  try {
+    return validateOptions(body.options);
+  } catch (err) {
+    if (err instanceof OptionsError) {
+      return json({ error: err.message }, 400);
+    }
+    throw err;
+  }
+}
+
+/** POST /api/lists/:id/squawks — body `{ text, initials, options? }`. */
 async function createSquawkRoute(
   req: Request,
   listId: number,
@@ -291,9 +336,13 @@ async function createSquawkRoute(
   if (!initials) {
     return json({ error: "initials are required" }, 400);
   }
+  const options = createExtras(body);
+  if (options instanceof Response) {
+    return options;
+  }
 
-  const squawk = createSquawk(listId, text, initials);
-  broadcast({ type: "squawk.created", squawk });
+  const squawk = createSquawk(listId, text, initials, options);
+  broadcast({ type: "squawk.created", squawk: forEvent(squawk) });
   return json(squawk, 201);
 }
 
@@ -318,6 +367,11 @@ async function quickAddSquawkRoute(req: Request): Promise<Response> {
     return json({ error: "initials is required" }, 400);
   }
   const initials = normalizeInitials(body.initials);
+  // Validate before creating the list, so a bad request leaves nothing behind.
+  const options = createExtras(body);
+  if (options instanceof Response) {
+    return options;
+  }
 
   let list = getListByName(listName);
   let listCreated = false;
@@ -327,19 +381,56 @@ async function quickAddSquawkRoute(req: Request): Promise<Response> {
     broadcast({ type: "list.created", list: publicListById(list.id) });
   }
 
-  const squawk = createSquawk(list.id, text, initials);
-  broadcast({ type: "squawk.created", squawk });
+  const squawk = createSquawk(list.id, text, initials, options);
+  broadcast({ type: "squawk.created", squawk: forEvent(squawk) });
   return json(squawk, 201);
 }
 
-/** PATCH /api/squawks/:id — body `{ text?, state?, initials? }`. */
+/**
+ * PATCH /api/squawks/:id — body `{ text?, state?, choice?, note?, initials? }`.
+ *
+ * `choice` (#168) is one of the squawk's own options; it resolves the squawk as
+ * `confirmed` with that label, so give it instead of `state`, not with it. `options`
+ * are fixed at create and are refused here. `note` is the UI user's one-way note:
+ * when a token is configured, a request that presents an `Authorization` header (a
+ * machine client; the browser sends none) is refused. That is a guard where the
+ * server can tell, not a security boundary: an internal client with no header, or
+ * any client when no token is configured, passes.
+ */
 async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
   const body = await readJson(req);
   if (!body) {
     return json({ error: "invalid request body" }, 400);
   }
 
-  const patch: { text?: string; state?: SquawkState } = {};
+  if (body.options !== undefined) {
+    return json({ error: "options are fixed when the squawk is created" }, 400);
+  }
+
+  const patch: { text?: string; state?: SquawkState; choice?: string; note?: string } = {};
+
+  if (body.note !== undefined) {
+    if (typeof body.note !== "string") {
+      return json({ error: "note must be a string" }, 400);
+    }
+    if (body.note.length > MAX_NOTE_LENGTH) {
+      return json({ error: `note is at most ${MAX_NOTE_LENGTH} characters` }, 400);
+    }
+    if (resolveApiToken() !== null && req.headers.has("authorization")) {
+      return json({ error: "notes are written in the UI" }, 403);
+    }
+    patch.note = body.note;
+  }
+
+  if (body.choice !== undefined) {
+    if (typeof body.choice !== "string") {
+      return json({ error: "choice must be a string" }, 400);
+    }
+    if (body.state !== undefined) {
+      return json({ error: "give state or choice, not both" }, 400);
+    }
+    patch.choice = body.choice;
+  }
 
   if (body.text !== undefined) {
     if (typeof body.text !== "string") {
@@ -357,8 +448,13 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
 
   // Require at least one editable field; an empty patch must not silently bump
   // updated_at (or "record" a change that didn't happen).
-  if (patch.text === undefined && patch.state === undefined) {
-    return json({ error: "no updatable fields: provide text or state" }, 400);
+  if (
+    patch.text === undefined &&
+    patch.state === undefined &&
+    patch.choice === undefined &&
+    patch.note === undefined
+  ) {
+    return json({ error: "no updatable fields: provide text, state, choice or note" }, 400);
   }
 
   let initials: string | undefined;
@@ -372,9 +468,12 @@ async function patchSquawkRoute(req: Request, id: number): Promise<Response> {
 
   try {
     const squawk = updateSquawk(id, patch, initials);
-    broadcast({ type: "squawk.updated", squawk });
+    broadcast({ type: "squawk.updated", squawk: forEvent(squawk) });
     return json(squawk);
   } catch (err) {
+    if (err instanceof InvalidChoiceError) {
+      return json({ error: err.message }, 400);
+    }
     if (err instanceof Error && err.message.includes("not found")) {
       return json({ error: "squawk not found" }, 404);
     }
@@ -461,7 +560,7 @@ async function addSquawkImageRoute(req: Request, id: number): Promise<Response> 
     throw err;
   }
   const squawk = getSquawk(id)!; // image_ids now includes the appended id
-  broadcast({ type: "squawk.updated", squawk });
+  broadcast({ type: "squawk.updated", squawk: forEvent(squawk) });
   return json(squawk);
 }
 
@@ -492,7 +591,7 @@ function deleteSquawkImageRoute(id: number, imageId: number): Response {
   }
   const squawk = getSquawk(id);
   if (squawk) {
-    broadcast({ type: "squawk.updated", squawk });
+    broadcast({ type: "squawk.updated", squawk: forEvent(squawk) });
   }
   return json({ ok: true });
 }

@@ -58,6 +58,9 @@ test("countByState tallies every state", () => {
     updated_at: "t",
     has_image: false,
     image_ids: [],
+    options: [],
+    choice: null,
+    note: "",
   });
   expect(countByState([])).toEqual({
     open: 0,

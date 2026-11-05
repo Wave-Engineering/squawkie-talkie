@@ -497,6 +497,15 @@ body {
 .squawk-row__state {
   text-transform: capitalize;
   cursor: pointer;
+  /* An answer label (#168) can be long: cut it with an ellipsis rather than
+     letting it widen the row. */
+  max-width: 14rem;
+  text-overflow: ellipsis;
+}
+
+/* A chosen answer shows as written, not capitalised like a state name. */
+.squawk-row__state--answer {
+  text-transform: none;
 }
 
 /* Per-state edge color + a faint matching glow — every state is visually
@@ -617,6 +626,59 @@ body {
 .squawk-row__image-btn:disabled {
   opacity: 0.5;
   cursor: progress;
+}
+
+/* The note button (#168) looks like the camera button; a small dot says a note
+   exists, whether or not the box is open. */
+.squawk-row__note-btn {
+  position: relative;
+  padding: var(--space-1) var(--space-2);
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.squawk-row__note-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
+}
+.squawk-row__note-btn--has::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The note box takes the full width under the row. */
+.squawk-row__note {
+  grid-column: 1 / -1;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+.squawk-row__note:focus {
+  outline: none;
+  background: var(--surface-2);
+  border-color: var(--accent-dim);
+}
+/* Reclaim the `hidden` attribute: the class's `display` would otherwise win. */
+.squawk-row__note[hidden] {
+  display: none;
 }
 
 /* The thumbnail is a button that opens the carousel. It shows the FIRST image
