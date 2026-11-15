@@ -137,18 +137,28 @@ export function shouldAlert(input: {
 export const BURST_MS = 3_000;
 
 /**
- * Groups adds into bursts per list. `hit` returns how many adds the current burst
- * holds and whether this one opened it. A burst runs on while adds keep arriving
- * within {@link BURST_MS} of the previous one.
+ * Groups adds into bursts. `hit` returns how many adds the list's current burst
+ * holds, whether this one opened it, and whether it opens a burst across all lists
+ * (`chime`: one chime per burst, however many alert-on lists it spans). A burst runs
+ * on while adds keep arriving within {@link BURST_MS} of the previous one.
  */
 export class Burst {
   private last = new Map<number, { at: number; count: number }>();
+  private lastAny: number | null = null;
 
-  hit(listId: number, now: number): { count: number; first: boolean } {
+  hit(listId: number, now: number): { count: number; first: boolean; chime: boolean } {
     const prev = this.last.get(listId);
     const count = prev !== undefined && now - prev.at <= BURST_MS ? prev.count + 1 : 1;
     this.last.set(listId, { at: now, count });
-    return { count, first: count === 1 };
+    const chime = this.lastAny === null || now - this.lastAny > BURST_MS;
+    this.lastAny = now;
+    return { count, first: count === 1, chime };
+  }
+
+  /** Forget every burst: the viewer has come back, so what follows starts afresh. */
+  reset(): void {
+    this.last.clear();
+    this.lastAny = null;
   }
 }
 
@@ -206,20 +216,132 @@ function playChime(): void {
   const ctx = audioContext();
   // Still locked (no gesture since load): skip rather than queue a sound for later.
   if (ctx === null || ctx.state !== "running") return;
-  const start = ctx.currentTime;
-  CHIME.notesHz.forEach((hz, i) => {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    const t0 = start + i * CHIME.noteSec;
-    osc.type = "sine";
-    osc.frequency.value = hz;
-    gain.gain.setValueAtTime(0.0001, t0);
-    gain.gain.exponentialRampToValueAtTime(CHIME.gain, t0 + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + CHIME.noteSec * 1.8);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + CHIME.noteSec * 2);
-  });
+  try {
+    const start = ctx.currentTime;
+    CHIME.notesHz.forEach((hz, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = start + i * CHIME.noteSec;
+      osc.type = "sine";
+      osc.frequency.value = hz;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(CHIME.gain, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + CHIME.noteSec * 1.8);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + CHIME.noteSec * 2);
+    });
+  } catch {
+    // A closed context or an odd browser: the popup and the title still work.
+  }
+}
+
+// ---------------------------------------------------------------------------
+// One alerting tab: several tabs of the app must not alert twice, or alert while
+// the viewer is looking at another of them
+// ---------------------------------------------------------------------------
+
+/** Written by a tab the viewer is looking at: `{ tab, at }`. */
+export const LOOKING_KEY = "st.looking";
+/** The id of the last squawk a tab alerted for, so a second tab stays quiet. */
+export const ALERTED_KEY = "st.alerted";
+/** A looking tab refreshes its mark this often; a mark older than the TTL is stale. */
+export const LOOKING_BEAT_MS = 4_000;
+export const LOOKING_TTL_MS = 10_000;
+
+const TAB_ID = Math.random().toString(36).slice(2);
+
+/**
+ * Whether the stored looking-mark names a tab other than `tab`, and is fresh. A
+ * missing, corrupt or stale mark is no one looking. Pure.
+ */
+export function anotherTabLooking(raw: string | null, tab: string, now: number): boolean {
+  if (raw === null) return false;
+  try {
+    const m = JSON.parse(raw) as { tab?: unknown; at?: unknown } | null;
+    return (
+      m !== null &&
+      typeof m === "object" &&
+      typeof m.tab === "string" &&
+      typeof m.at === "number" &&
+      m.tab !== tab &&
+      now - m.at <= LOOKING_TTL_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function storageGet(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // No storage: tabs cannot coordinate, and each alerts for itself.
+  }
+}
+
+/** Mark this tab as the one being looked at, or release the mark when it is not. */
+function syncLooking(now = Date.now()): void {
+  if (viewerIsLooking(document)) {
+    storageSet(LOOKING_KEY, JSON.stringify({ tab: TAB_ID, at: now }));
+  } else {
+    const raw = storageGet(LOOKING_KEY);
+    if (raw !== null && !anotherTabLooking(raw, TAB_ID, now)) {
+      try {
+        window.localStorage.removeItem(LOOKING_KEY);
+      } catch {
+        // Nothing to release.
+      }
+    }
+  }
+}
+
+/** How long a tab holds the claim on a squawk, so every other tab has time to lose it. */
+export const CLAIM_HOLD_MS = 5_000;
+
+type LockManagerLike = {
+  request(
+    name: string,
+    options: { ifAvailable: boolean },
+    callback: (lock: unknown) => Promise<void>,
+  ): Promise<void>;
+};
+
+/**
+ * Run `raise` in exactly one tab of this browser for a squawk. Web Locks are atomic
+ * across tabs, so two hidden tabs that hear the same event at the same instant
+ * cannot both win (a `localStorage` read-then-write cannot promise that). Without
+ * Web Locks, a stored claim narrows the window but cannot close it. A squawk with no
+ * id always alerts.
+ */
+function claimAlert(squawkId: unknown, raise: () => void): void {
+  if (typeof squawkId !== "number") {
+    raise();
+    return;
+  }
+  const locks = (navigator as unknown as { locks?: LockManagerLike | null }).locks;
+  if (locks != null && typeof locks.request === "function") {
+    locks
+      .request(`st-alert-${squawkId}`, { ifAvailable: true }, async (lock) => {
+        if (lock === null) return; // another tab has it
+        raise();
+        await new Promise<void>((r) => setTimeout(r, CLAIM_HOLD_MS));
+      })
+      .catch((err: unknown) => console.error("alerts: raising an alert failed", err));
+    return;
+  }
+  const mark = String(squawkId);
+  if (storageGet(ALERTED_KEY) === mark) return;
+  storageSet(ALERTED_KEY, mark);
+  raise();
 }
 
 // ---------------------------------------------------------------------------
@@ -271,24 +393,39 @@ export function handleRealtimeEvent(event: AlertableEvent, now = Date.now()): vo
     looking: viewerIsLooking(document),
   });
   if (due === null) return;
+  // The viewer is looking at another tab of the app: stay quiet.
+  if (anotherTabLooking(storageGet(LOOKING_KEY), TAB_ID, now)) return;
+  // Every hidden tab counts what it missed; one of them raises the popup and chime.
   unseen += 1;
   paintTitle();
-  const { count, first } = burst.hit(due.listId, now);
-  if (first) playChime();
-  raiseNotification(due, count);
+  const { count, chime } = burst.hit(due.listId, now);
+  claimAlert((event.squawk as { id?: unknown } | null | undefined)?.id, () => {
+    if (chime) playChime();
+    raiseNotification(due, count);
+  });
 }
 
 /** Start the title count and the audio unlock. Call once at bootstrap. */
 export function initNotify(): void {
   baseTitle = document.title;
-  const clear = (): void => {
-    if (viewerIsLooking(document) && unseen > 0) {
-      unseen = 0;
-      paintTitle();
+  const sync = (): void => {
+    syncLooking();
+    // Coming back ends the bursts and clears the unseen count.
+    if (viewerIsLooking(document)) {
+      burst.reset();
+      if (unseen > 0) {
+        unseen = 0;
+        paintTitle();
+      }
     }
+    // The permission may have changed in the browser's settings while away.
+    repaintToggles();
   };
-  document.addEventListener("visibilitychange", clear);
-  window.addEventListener("focus", clear);
+  document.addEventListener("visibilitychange", sync);
+  window.addEventListener("focus", sync);
+  window.addEventListener("blur", () => syncLooking());
+  window.setInterval(() => syncLooking(), LOOKING_BEAT_MS);
+  syncLooking();
   // Another tab of this browser changed the toggles: follow it.
   window.addEventListener("storage", (e) => {
     if (e.key === ALERTS_KEY) repaintToggles();
@@ -308,8 +445,23 @@ export function initNotify(): void {
 // The toggle
 // ---------------------------------------------------------------------------
 
-/** The toggle's state copy. Pure. */
-export function toggleCopy(on: boolean, blocked: string | null): { label: string; title: string } {
+/**
+ * The toggle's state copy. Pure. `popupsBlocked` is true when the alert is on but the
+ * browser will not show notifications (permission revoked after turn-on): the chime
+ * and the title count still work, so the toggle says so rather than reading plain "on".
+ */
+export function toggleCopy(
+  on: boolean,
+  blocked: string | null,
+  popupsBlocked = false,
+): { label: string; title: string } {
+  if (on && popupsBlocked) {
+    return {
+      label: "Alert: chime only",
+      title:
+        "Notifications are blocked for this site, so you get the chime and the tab count but no popup. Allow them in the browser's site settings. Click to turn off.",
+    };
+  }
   if (on) {
     return {
       label: "Alert: on",
@@ -324,15 +476,23 @@ export function toggleCopy(on: boolean, blocked: string | null): { label: string
   };
 }
 
-/** Why a turn-on cannot proceed, or null when it can (permission is asked on the click). */
+/**
+ * Why a turn-on cannot proceed, or null when it can (permission is asked on the
+ * click). `asked` is true once the prompt has been shown: a prompt that is still
+ * "default" afterwards was dismissed.
+ */
 export function blockedReason(
   permission: NotificationPermission | "unsupported",
+  asked = false,
 ): string | null {
   if (permission === "unsupported") {
     return "This browser does not support notifications.";
   }
   if (permission === "denied") {
     return "Notifications are blocked for this site. Allow them in the browser's site settings, then try again.";
+  }
+  if (permission === "default" && asked) {
+    return "Notification permission was not given. Click the alert again to be asked.";
   }
   return null;
 }
@@ -343,11 +503,40 @@ function currentPermission(): NotificationPermission | "unsupported" {
 
 const toggles = new Set<{ el: HTMLButtonElement; listId: number; paint: () => void }>();
 
+/** Drop toggles whose button has left the page (a re-rendered view builds new ones). */
+function pruneToggles(): void {
+  for (const t of toggles) if (!t.el.isConnected) toggles.delete(t);
+}
+
 function repaintToggles(): void {
-  for (const t of toggles) {
-    if (!t.el.isConnected) toggles.delete(t);
-    else t.paint();
+  pruneToggles();
+  for (const t of toggles) t.paint();
+}
+
+/** How long a notice stays on screen. */
+export const NOTICE_MS = 8_000;
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Say why a turn-on failed where everyone can see and hear it: a polite live region,
+ * because a `title` is invisible on touch and to the keyboard.
+ */
+function showNotice(message: string): void {
+  let el = document.getElementById("alert-notice");
+  if (el === null) {
+    el = document.createElement("div");
+    el.id = "alert-notice";
+    el.className = "alert-notice";
+    el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
+    document.body.append(el);
   }
+  el.textContent = message;
+  el.hidden = false;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    if (el !== null) el.hidden = true;
+  }, NOTICE_MS);
 }
 
 /**
@@ -362,12 +551,17 @@ export function buildAlertToggle(listId: number, getName: () => string): HTMLBut
 
   const paint = (): void => {
     const on = isAlertOn(listId);
-    const c = toggleCopy(on, blocked);
+    const permission = currentPermission();
+    if (permission === "granted") blocked = null; // allowed since: drop the old reason
+    const popupsBlocked = on && permission !== "granted";
+    const c = toggleCopy(on, blocked, popupsBlocked);
     el.textContent = c.label;
     el.title = c.title;
     el.setAttribute("aria-pressed", on ? "true" : "false");
-    el.setAttribute("aria-label", `${c.label} for ${getName()}`);
+    // A constant name: `aria-pressed` carries the state, so it is not said twice.
+    el.setAttribute("aria-label", `Alert for ${getName()}`);
     el.classList.toggle("alert-toggle--on", on);
+    el.classList.toggle("alert-toggle--degraded", popupsBlocked);
   };
 
   el.addEventListener("click", () => {
@@ -379,24 +573,27 @@ export function buildAlertToggle(listId: number, getName: () => string): HTMLBut
       // The click is the user gesture the browser needs for the permission prompt and the chime.
       unlockAudio();
       let permission = currentPermission();
+      let asked = false;
       if (permission === "default") {
+        asked = true;
         try {
           permission = await Notification.requestPermission();
         } catch {
           permission = "default";
         }
       }
-      blocked = blockedReason(permission);
+      blocked = blockedReason(permission, asked);
       if (permission === "granted") {
         setAlertOn(listId, getName(), true);
       } else {
         paint();
+        if (blocked !== null) showNotice(blocked);
       }
     })();
   });
 
-  const entry = { el, listId, paint };
-  toggles.add(entry);
+  pruneToggles();
+  toggles.add({ el, listId, paint });
   paint();
   return el;
 }

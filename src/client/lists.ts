@@ -26,7 +26,7 @@ import {
   replayTour,
   runTour,
 } from "./coachmarks.ts";
-import { buildAlertToggle, noteListName } from "./notify.ts";
+import { buildAlertToggle, forgetList, noteListName } from "./notify.ts";
 import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
 
@@ -740,6 +740,7 @@ export function renderLists(container: HTMLElement): void {
         if (!freshIds.has(l.id)) {
           const row = rows.querySelector<HTMLElement>(`[data-list-id="${l.id}"]`);
           if (row) removeList(l.id, row);
+          forgetList(l.id); // its alert goes with it (#177)
         }
       }
     },

@@ -261,7 +261,12 @@ export type Dispatch = (event: RealtimeEvent) => void;
 export function dispatch(event: RealtimeEvent): void {
   // Alerts (#177) hear every live event first; a re-fetch after a reconnect is
   // not an event, so it can never alert.
-  handleRealtimeEvent(event);
+  // A failing alert must never cost the live row update below.
+  try {
+    handleRealtimeEvent(event);
+  } catch (err) {
+    console.error("alerts: handling a realtime event failed", err);
+  }
   applyEvent(event, {
     view: activeView(),
     activeElement: document.activeElement,

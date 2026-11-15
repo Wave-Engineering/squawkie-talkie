@@ -9,9 +9,13 @@ import { afterAll, beforeAll, beforeEach, expect, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
+  ALERTED_KEY,
   ALERTS_KEY,
   BURST_MS,
   Burst,
+  LOOKING_KEY,
+  LOOKING_TTL_MS,
+  anotherTabLooking,
   blockedReason,
   buildAlertToggle,
   forgetList,
@@ -25,8 +29,10 @@ import {
   shouldAlert,
   titleWithCount,
   toggleCopy,
+  unlockAudio,
   viewerIsLooking,
 } from "../src/client/notify.ts";
+import { dispatch } from "../src/client/realtime.ts";
 
 // --- stubs -----------------------------------------------------------------
 
@@ -50,8 +56,12 @@ class FakeNotification {
 }
 
 let oscillatorsStarted = 0;
+let audio: FakeAudioContext | null = null;
 class FakeAudioContext {
   state: AudioContextState = "running";
+  constructor() {
+    audio = this;
+  }
   currentTime = 0;
   destination = {};
   createOscillator() {
@@ -96,6 +106,7 @@ beforeEach(() => {
   FakeNotification.instances = [];
   FakeNotification.permission = "granted";
   oscillatorsStarted = 0;
+  if (audio !== null) audio.state = "running";
   // The unseen count is module state; clear it the way a viewer does, by coming back.
   hidden = false;
   focused = true;
@@ -105,9 +116,11 @@ beforeEach(() => {
   document.title = "Squawkie-Talkie";
 });
 
+// Each add is its own squawk: tabs claim an alert by squawk id.
+let nextSquawkId = 1;
 const created = (listId: number, text = "a new squawk") => ({
   type: "squawk.created",
-  squawk: { id: 1, list_id: listId, text },
+  squawk: { id: nextSquawkId++, list_id: listId, text },
 });
 
 // --- the decision ------------------------------------------------------------
@@ -166,22 +179,31 @@ test("viewerIsLooking: only a visible tab in a focused window", () => {
 
 test("Burst: adds within the window join one burst; only the first is first", () => {
   const b = new Burst();
-  expect(b.hit(1, 1_000)).toEqual({ count: 1, first: true });
-  expect(b.hit(1, 1_000 + BURST_MS)).toEqual({ count: 2, first: false });
+  expect(b.hit(1, 1_000)).toEqual({ count: 1, first: true, chime: true });
+  expect(b.hit(1, 1_000 + BURST_MS)).toEqual({ count: 2, first: false, chime: false });
   // Rolling: measured from the previous add, not from the first.
-  expect(b.hit(1, 1_000 + 2 * BURST_MS)).toEqual({ count: 3, first: false });
+  expect(b.hit(1, 1_000 + 2 * BURST_MS)).toEqual({ count: 3, first: false, chime: false });
 });
 
 test("Burst: a gap longer than the window starts a new burst", () => {
   const b = new Burst();
   b.hit(1, 0);
-  expect(b.hit(1, BURST_MS + 1)).toEqual({ count: 1, first: true });
+  expect(b.hit(1, BURST_MS + 1)).toEqual({ count: 1, first: true, chime: true });
 });
 
-test("Burst: lists burst independently", () => {
+test("Burst: lists count independently, but one chime covers a burst across lists", () => {
   const b = new Burst();
   b.hit(1, 0);
-  expect(b.hit(2, 10)).toEqual({ count: 1, first: true });
+  expect(b.hit(2, 10)).toEqual({ count: 1, first: true, chime: false });
+  expect(b.hit(2, BURST_MS * 3)).toEqual({ count: 1, first: true, chime: true });
+});
+
+test("Burst: reset forgets the run, so the next add opens a fresh burst", () => {
+  const b = new Burst();
+  b.hit(1, 0);
+  b.hit(1, 100);
+  b.reset();
+  expect(b.hit(1, 200)).toEqual({ count: 1, first: true, chime: true });
 });
 
 // --- copy ---------------------------------------------------------------------
@@ -217,6 +239,19 @@ test("blockedReason / toggleCopy: say why a turn-on cannot proceed", () => {
   expect(toggleCopy(true, null).label).toBe("Alert: on");
   expect(toggleCopy(false, null).label).toBe("Alert: off");
   expect(toggleCopy(false, "Notifications are blocked.").title).toBe("Notifications are blocked.");
+});
+
+test("blockedReason: a prompt that was shown and left unanswered says so; an unasked one does not", () => {
+  expect(blockedReason("default", true)).toContain("not given");
+  expect(blockedReason("default", false)).toBeNull();
+  expect(blockedReason("granted", true)).toBeNull();
+});
+
+test("toggleCopy: on with the popups blocked says chime only", () => {
+  const c = toggleCopy(true, null, true);
+  expect(c.label).toBe("Alert: chime only");
+  expect(c.title).toContain("blocked");
+  expect(toggleCopy(true, null, false).label).toBe("Alert: on");
 });
 
 // --- the settings store -------------------------------------------------------
@@ -322,7 +357,8 @@ test("buildAlertToggle: off by default, with a name the screen reader can use", 
   const el = buildAlertToggle(21, () => "triage");
   expect(el.textContent).toBe("Alert: off");
   expect(el.getAttribute("aria-pressed")).toBe("false");
-  expect(el.getAttribute("aria-label")).toBe("Alert: off for triage");
+  // A constant name: aria-pressed carries the state.
+  expect(el.getAttribute("aria-label")).toBe("Alert for triage");
   expect(isAlertOn(21)).toBe(false);
 });
 
@@ -378,4 +414,194 @@ test("toggles for the same list stay in step, and a detached one is dropped", as
   b.remove();
   setAlertOn(25, "x", false);
   expect(a.textContent).toBe("Alert: off");
+});
+
+test("buildAlertToggle: a dismissed prompt leaves it off and says why, on screen", async () => {
+  FakeNotification.permission = "default";
+  const original = FakeNotification.requestPermission;
+  FakeNotification.requestPermission = async () => "default"; // dismissed, not denied
+  const el = buildAlertToggle(28, () => "x");
+  document.body.append(el);
+  el.click();
+  await settle();
+  FakeNotification.requestPermission = original;
+  expect(isAlertOn(28)).toBe(false);
+  expect(el.title).toContain("not given");
+  // The reason is on screen and announced, not only in a tooltip.
+  const notice = document.getElementById("alert-notice");
+  expect(notice?.textContent).toContain("not given");
+  expect(notice?.getAttribute("role")).toBe("status");
+});
+
+test("buildAlertToggle: permission revoked after turn-on reads chime only, and recovers", () => {
+  setAlertOn(29, "x", true);
+  const el = buildAlertToggle(29, () => "x");
+  document.body.append(el);
+  expect(el.textContent).toBe("Alert: on");
+  FakeNotification.permission = "denied";
+  window.dispatchEvent(new window.Event("focus")); // the toggles repaint on return
+  expect(el.textContent).toBe("Alert: chime only");
+  expect(el.classList.contains("alert-toggle--degraded")).toBe(true);
+  FakeNotification.permission = "granted";
+  window.dispatchEvent(new window.Event("focus"));
+  expect(el.textContent).toBe("Alert: on");
+});
+
+// --- looking vs focus: both must be true to stay quiet --------------------------
+
+test("handleRealtimeEvent: a visible tab whose window is unfocused still alerts", () => {
+  setAlertOn(31, "x", true);
+  hidden = false;
+  focused = false;
+  handleRealtimeEvent(created(31), 700_000);
+  expect(FakeNotification.instances.length).toBe(1);
+});
+
+test("handleRealtimeEvent: a hidden tab in a focused window still alerts", () => {
+  setAlertOn(32, "x", true);
+  hidden = true;
+  focused = true;
+  handleRealtimeEvent(created(32), 710_000);
+  expect(FakeNotification.instances.length).toBe(1);
+});
+
+// --- the chime: locked audio, and one chime per burst across lists -----------------
+
+test("handleRealtimeEvent: a locked audio context skips the chime, and a gesture unlocks it", () => {
+  unlockAudio(); // make sure the context exists
+  setAlertOn(33, "x", true);
+  audio!.state = "suspended";
+  handleRealtimeEvent(created(33), 720_000);
+  expect(oscillatorsStarted).toBe(0); // skipped, not queued
+  expect(FakeNotification.instances.length).toBe(1); // the popup does not need audio
+  unlockAudio();
+  expect(audio!.state as string).toBe("running");
+  handleRealtimeEvent(created(33), 720_000 + 10 * BURST_MS);
+  expect(oscillatorsStarted).toBe(2);
+});
+
+test("handleRealtimeEvent: two alert-on lists in one burst chime once", () => {
+  setAlertOn(34, "a", true);
+  setAlertOn(35, "b", true);
+  handleRealtimeEvent(created(34), 730_000);
+  handleRealtimeEvent(created(35), 730_000 + 1_000);
+  expect(FakeNotification.instances.length).toBe(2); // one popup per list
+  expect(oscillatorsStarted).toBe(2); // one chime
+});
+
+test("returning to the page ends the burst: the next add chimes and counts from one", () => {
+  setAlertOn(36, "x", true);
+  handleRealtimeEvent(created(36), 740_000);
+  hidden = false;
+  focused = true;
+  window.dispatchEvent(new window.Event("focus"));
+  hidden = true;
+  focused = false;
+  oscillatorsStarted = 0;
+  FakeNotification.instances = [];
+  handleRealtimeEvent(created(36), 740_000 + 1_000); // within 3 s of the last add
+  expect(oscillatorsStarted).toBe(2);
+  expect(FakeNotification.instances[0]!.title).toBe("x: new squawk");
+  expect(document.title).toBe("(1) Squawkie-Talkie");
+});
+
+// --- several tabs: one alerts, none while another is looked at -------------------
+
+test("anotherTabLooking: a fresh mark from another tab, and nothing else", () => {
+  const mark = (tab: string, at: number) => JSON.stringify({ tab, at });
+  expect(anotherTabLooking(mark("b", 1_000), "a", 1_000 + LOOKING_TTL_MS)).toBe(true);
+  expect(anotherTabLooking(mark("b", 1_000), "a", 1_000 + LOOKING_TTL_MS + 1)).toBe(false); // stale
+  expect(anotherTabLooking(mark("a", 1_000), "a", 1_000)).toBe(false); // our own
+  expect(anotherTabLooking(null, "a", 0)).toBe(false);
+  expect(anotherTabLooking("{nope", "a", 0)).toBe(false);
+  expect(anotherTabLooking(JSON.stringify({ tab: 1, at: "x" }), "a", 0)).toBe(false);
+  expect(anotherTabLooking("null", "a", 0)).toBe(false);
+});
+
+test("handleRealtimeEvent: stays quiet while another tab of the app is being looked at", () => {
+  setAlertOn(41, "x", true);
+  window.localStorage.setItem(LOOKING_KEY, JSON.stringify({ tab: "someone-else", at: 800_000 }));
+  handleRealtimeEvent(created(41), 800_000 + 1_000);
+  expect(FakeNotification.instances.length).toBe(0);
+  expect(oscillatorsStarted).toBe(0);
+  expect(document.title).toBe("Squawkie-Talkie");
+  // Their mark goes stale (they left): this tab alerts again.
+  handleRealtimeEvent(created(41), 800_000 + LOOKING_TTL_MS + 1_000);
+  expect(FakeNotification.instances.length).toBe(1);
+});
+
+test("handleRealtimeEvent: a second hidden tab does not chime for a squawk another tab took", () => {
+  setAlertOn(42, "x", true);
+  const squawk = created(42);
+  handleRealtimeEvent(squawk, 810_000); // this tab takes it
+  expect(oscillatorsStarted).toBe(2);
+  expect(window.localStorage.getItem(ALERTED_KEY)).toBe(String(squawk.squawk.id));
+  // The same squawk arrives on another hidden tab: simulated by the same claim, replayed.
+  oscillatorsStarted = 0;
+  FakeNotification.instances = [];
+  handleRealtimeEvent(squawk, 810_000 + 500);
+  expect(oscillatorsStarted).toBe(0);
+  expect(FakeNotification.instances.length).toBe(0);
+});
+
+test("handleRealtimeEvent: with Web Locks, only the tab that wins the lock raises the alert", async () => {
+  setAlertOn(43, "x", true);
+  const taken = new Set<string>();
+  const requested: string[] = [];
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      // The browser's contract, reduced: ifAvailable gives null when someone holds it.
+      request: async (name: string, _o: unknown, cb: (l: unknown) => Promise<void>) => {
+        requested.push(name);
+        if (taken.has(name)) return cb(null);
+        taken.add(name);
+        return cb({ name });
+      },
+    },
+  });
+  try {
+    const sq = created(43);
+    handleRealtimeEvent(sq, 820_000); // this tab wins the lock
+    await settle();
+    expect(requested).toEqual([`st-alert-${sq.squawk.id}`]);
+    expect(FakeNotification.instances.length).toBe(1);
+    expect(oscillatorsStarted).toBe(2);
+    // Another tab hears the same squawk and loses the lock: it counts, but stays silent.
+    FakeNotification.instances = [];
+    oscillatorsStarted = 0;
+    handleRealtimeEvent(sq, 820_000 + 100);
+    await settle();
+    expect(FakeNotification.instances.length).toBe(0);
+    expect(oscillatorsStarted).toBe(0);
+    expect(document.title).toBe("(2) Squawkie-Talkie"); // the loser still counts what it missed
+  } finally {
+    Object.defineProperty(navigator, "locks", { configurable: true, value: null });
+  }
+});
+
+// --- the seam: a failing alert must not cost the live row update ----------------------
+
+test("dispatch: an alert that throws does not stop the event being applied", () => {
+  setAlertOn(51, "x", true);
+  const real = Object.getOwnPropertyDescriptor(document, "title");
+  Object.defineProperty(document, "title", {
+    configurable: true,
+    get: () => "Squawkie-Talkie",
+    set: () => {
+      throw new Error("title is read-only here");
+    },
+  });
+  const errors: unknown[] = [];
+  const realError = console.error;
+  console.error = (...a: unknown[]) => errors.push(a);
+  try {
+    // No active view is mounted, so applyEvent has nothing to do; the point is that
+    // the throw from the alert does not escape dispatch.
+    expect(() => dispatch(created(51) as never)).not.toThrow();
+  } finally {
+    console.error = realError;
+    if (real) Object.defineProperty(document, "title", real);
+  }
+  expect(errors.length).toBe(1);
 });

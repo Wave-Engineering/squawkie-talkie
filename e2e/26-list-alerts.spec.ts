@@ -18,7 +18,8 @@ type Win = Window & {
 
 test.describe("per-list alerts (#177)", () => {
   test.beforeEach(async ({ page }) => {
-    await page.addInitScript(() => {
+    // Context-wide, so a second tab opened by a test gets the same stand-ins.
+    await page.context().addInitScript(() => {
       const w = window as unknown as Win & { Notification: unknown };
       w.__away = false;
       w.__notes = [];
@@ -59,7 +60,7 @@ test.describe("per-list alerts (#177)", () => {
   const setAway = (page: Page, away: boolean) =>
     page.evaluate((a) => {
       (window as unknown as Win).__away = a;
-      if (!a) window.dispatchEvent(new Event("focus"));
+      window.dispatchEvent(new Event(a ? "blur" : "focus"));
     }, away);
   const row = (page: Page, name: string) =>
     page.locator(".list-row", { has: page.locator(`.list-row__open:has-text("${name}")`) });
@@ -130,6 +131,36 @@ test.describe("per-list alerts (#177)", () => {
     expect(all[0]!.title).toBe("AlertBurst: new squawk");
     expect(all[2]!.title).toBe("AlertBurst: 3 new squawks");
     expect(new Set(all.map((x) => x.tag)).size).toBe(1); // one tag, so the browser replaces
+  });
+
+  test("with two tabs open, none alerts while one is looked at, and only one once both are away", async ({
+    seededPage: a,
+  }) => {
+    const id = await makeList(a, "AlertTwoTabs");
+    await a.goto("/");
+    await row(a, "AlertTwoTabs").locator(".alert-toggle").click();
+    await expect(row(a, "AlertTwoTabs").locator(".alert-toggle")).toHaveText("Alert: on");
+
+    // Tab B is the one the viewer is looking at; tab A is away.
+    const b = await a.context().newPage();
+    await b.goto("/");
+    await expect(row(b, "AlertTwoTabs").locator(".alert-toggle")).toHaveText("Alert: on");
+    await setAway(a, true);
+
+    await addTo(a, id, "tab B is being looked at");
+    await expect(b.locator('.conn-status[data-state="online"]')).toBeVisible();
+    await a.waitForTimeout(500); // the add has reached A by now; give a wrong alert time to show
+    expect(await notes(a)).toHaveLength(0);
+    expect(await notes(b)).toHaveLength(0);
+
+    // Now the viewer leaves both: exactly one of the two tabs alerts, not both.
+    await setAway(b, true);
+    await addTo(a, id, "both tabs away");
+    await expect
+      .poll(async () => (await notes(a)).length + (await notes(b)).length)
+      .toBeGreaterThan(0);
+    await a.waitForTimeout(500);
+    expect((await notes(a)).length + (await notes(b)).length).toBe(1);
   });
 
   test("the toggle survives a reload, matches in the list header, and a deleted list forgets it", async ({
