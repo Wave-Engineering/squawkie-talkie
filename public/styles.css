@@ -1140,8 +1140,12 @@ body {
   border-radius: var(--radius);
   z-index: 50;
 }
-.alert-notice[hidden] {
-  display: none;
+/* Empty means invisible, not display:none: a screen reader only announces a
+   change to a live region that is in the page. */
+.alert-notice:empty {
+  opacity: 0;
+  pointer-events: none;
+  border-color: transparent;
 }
 
 .list-row__confirm {

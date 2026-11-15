@@ -13,8 +13,10 @@ import {
   ALERTS_KEY,
   BURST_MS,
   Burst,
+  CHIMED_KEY,
   LOOKING_KEY,
   LOOKING_TTL_MS,
+  NOTICE_FILL_MS,
   anotherTabLooking,
   blockedReason,
   buildAlertToggle,
@@ -32,7 +34,7 @@ import {
   unlockAudio,
   viewerIsLooking,
 } from "../src/client/notify.ts";
-import { dispatch } from "../src/client/realtime.ts";
+import { dispatch, setActiveView } from "../src/client/realtime.ts";
 
 // --- stubs -----------------------------------------------------------------
 
@@ -250,7 +252,7 @@ test("blockedReason: a prompt that was shown and left unanswered says so; an una
 test("toggleCopy: on with the popups blocked says chime only", () => {
   const c = toggleCopy(true, null, true);
   expect(c.label).toBe("Alert: chime only");
-  expect(c.title).toContain("blocked");
+  expect(c.title).toContain("not showing notifications");
   expect(toggleCopy(true, null, false).label).toBe("Alert: on");
 });
 
@@ -427,10 +429,15 @@ test("buildAlertToggle: a dismissed prompt leaves it off and says why, on screen
   FakeNotification.requestPermission = original;
   expect(isAlertOn(28)).toBe(false);
   expect(el.title).toContain("not given");
-  // The reason is on screen and announced, not only in a tooltip.
+  // The reason is on screen and announced, not only in a tooltip. The region is in
+  // the page already, empty, and is filled a beat later so a screen reader hears it.
   const notice = document.getElementById("alert-notice");
-  expect(notice?.textContent).toContain("not given");
+  expect(notice).not.toBeNull();
   expect(notice?.getAttribute("role")).toBe("status");
+  expect(notice?.hasAttribute("hidden")).toBe(false);
+  expect(notice?.textContent).toBe("");
+  await new Promise((r) => setTimeout(r, NOTICE_FILL_MS + 30));
+  expect(notice?.textContent).toContain("not given");
 });
 
 test("buildAlertToggle: permission revoked after turn-on reads chime only, and recovers", () => {
@@ -564,7 +571,8 @@ test("handleRealtimeEvent: with Web Locks, only the tab that wins the lock raise
     const sq = created(43);
     handleRealtimeEvent(sq, 820_000); // this tab wins the lock
     await settle();
-    expect(requested).toEqual([`st-alert-${sq.squawk.id}`]);
+    // The popup and the chime are claimed apart, each under its own lock.
+    expect(requested).toEqual([`st-alert-${sq.squawk.id}`, `st-chime-${sq.squawk.id}`]);
     expect(FakeNotification.instances.length).toBe(1);
     expect(oscillatorsStarted).toBe(2);
     // Another tab hears the same squawk and loses the lock: it counts, but stays silent.
@@ -580,10 +588,83 @@ test("handleRealtimeEvent: with Web Locks, only the tab that wins the lock raise
   }
 });
 
+test("handleRealtimeEvent: a refused lock request falls back to the stored claim, so the alert is not lost", async () => {
+  setAlertOn(44, "x", true);
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      // A browser with site data blocked: the request rejects before the callback runs.
+      request: async () => {
+        throw new Error("SecurityError");
+      },
+    },
+  });
+  try {
+    const sq = created(44);
+    handleRealtimeEvent(sq, 830_000);
+    await settle();
+    expect(FakeNotification.instances.length).toBe(1);
+    expect(oscillatorsStarted).toBe(2);
+    expect(window.localStorage.getItem(ALERTED_KEY)).toBe(String(sq.squawk.id));
+    expect(window.localStorage.getItem(CHIMED_KEY)).toBe(String(sq.squawk.id));
+  } finally {
+    Object.defineProperty(navigator, "locks", { configurable: true, value: null });
+  }
+});
+
+test("handleRealtimeEvent: a tab whose audio is locked takes the popup but leaves the chime to another", async () => {
+  unlockAudio();
+  setAlertOn(45, "x", true);
+  audio!.state = "suspended";
+  const requested: string[] = [];
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (name: string, _o: unknown, cb: (l: unknown) => Promise<void>) => {
+        requested.push(name);
+        return cb({ name });
+      },
+    },
+  });
+  try {
+    const sq = created(45);
+    handleRealtimeEvent(sq, 840_000);
+    await settle();
+    expect(requested).toEqual([`st-alert-${sq.squawk.id}`]); // no chime lock taken
+    expect(FakeNotification.instances.length).toBe(1);
+    expect(oscillatorsStarted).toBe(0);
+  } finally {
+    Object.defineProperty(navigator, "locks", { configurable: true, value: null });
+  }
+});
+
+// --- the looking-mark follows the page out ------------------------------------------
+
+test("pagehide releases this tab's looking-mark, and leaves another tab's alone", () => {
+  // beforeEach returned focus to this page, so its own mark is stored.
+  expect(window.localStorage.getItem(LOOKING_KEY)).not.toBeNull();
+  window.dispatchEvent(new window.Event("pagehide"));
+  expect(window.localStorage.getItem(LOOKING_KEY)).toBeNull();
+
+  const theirs = JSON.stringify({ tab: "someone-else", at: Date.now() });
+  window.localStorage.setItem(LOOKING_KEY, theirs);
+  window.dispatchEvent(new window.Event("pagehide"));
+  expect(window.localStorage.getItem(LOOKING_KEY)).toBe(theirs);
+});
+
 // --- the seam: a failing alert must not cost the live row update ----------------------
 
-test("dispatch: an alert that throws does not stop the event being applied", () => {
+test("dispatch: an alert that throws still lets the event reach the mounted view", () => {
   setAlertOn(51, "x", true);
+  let applied = 0;
+  setActiveView({
+    kind: "lists",
+    upsertList: () => {},
+    removeList: () => {},
+    squawkChanged: () => {
+      applied += 1;
+    },
+  });
   const real = Object.getOwnPropertyDescriptor(document, "title");
   Object.defineProperty(document, "title", {
     configurable: true,
@@ -596,12 +677,14 @@ test("dispatch: an alert that throws does not stop the event being applied", () 
   const realError = console.error;
   console.error = (...a: unknown[]) => errors.push(a);
   try {
-    // No active view is mounted, so applyEvent has nothing to do; the point is that
-    // the throw from the alert does not escape dispatch.
+    // paintTitle throws inside the alert; the throw must not escape dispatch, and the
+    // lists view must still hear that a squawk changed.
     expect(() => dispatch(created(51) as never)).not.toThrow();
   } finally {
     console.error = realError;
     if (real) Object.defineProperty(document, "title", real);
+    setActiveView(null);
   }
   expect(errors.length).toBe(1);
+  expect(applied).toBe(1);
 });

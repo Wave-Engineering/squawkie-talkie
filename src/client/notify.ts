@@ -212,6 +212,11 @@ export function unlockAudio(): void {
   if (ctx !== null && ctx.state === "suspended") void ctx.resume().catch(() => {});
 }
 
+/** Whether this tab could play the chime right now (the context exists and is running). */
+function audioReady(): boolean {
+  return audioContext()?.state === "running";
+}
+
 function playChime(): void {
   const ctx = audioContext();
   // Still locked (no gesture since load): skip rather than queue a sound for later.
@@ -243,8 +248,10 @@ function playChime(): void {
 
 /** Written by a tab the viewer is looking at: `{ tab, at }`. */
 export const LOOKING_KEY = "st.looking";
-/** The id of the last squawk a tab alerted for, so a second tab stays quiet. */
+/** The id of the last squawk a tab raised a popup for, so a second tab stays quiet (fallback claim). */
 export const ALERTED_KEY = "st.alerted";
+/** The same, for the chime. */
+export const CHIMED_KEY = "st.chimed";
 /** A looking tab refreshes its mark this often; a mark older than the TTL is stale. */
 export const LOOKING_BEAT_MS = 4_000;
 export const LOOKING_TTL_MS = 10_000;
@@ -288,19 +295,26 @@ function storageSet(key: string, value: string): void {
   }
 }
 
+/** Remove the looking-mark if it is this tab's own; another tab's mark is left alone. */
+function releaseLooking(): void {
+  const raw = storageGet(LOOKING_KEY);
+  if (raw === null) return;
+  try {
+    const m = JSON.parse(raw) as { tab?: unknown } | null;
+    if (m !== null && typeof m === "object" && m.tab === TAB_ID) {
+      window.localStorage.removeItem(LOOKING_KEY);
+    }
+  } catch {
+    // A corrupt mark names no tab, and goes stale on its own.
+  }
+}
+
 /** Mark this tab as the one being looked at, or release the mark when it is not. */
 function syncLooking(now = Date.now()): void {
   if (viewerIsLooking(document)) {
     storageSet(LOOKING_KEY, JSON.stringify({ tab: TAB_ID, at: now }));
   } else {
-    const raw = storageGet(LOOKING_KEY);
-    if (raw !== null && !anotherTabLooking(raw, TAB_ID, now)) {
-      try {
-        window.localStorage.removeItem(LOOKING_KEY);
-      } catch {
-        // Nothing to release.
-      }
-    }
+    releaseLooking();
   }
 }
 
@@ -315,33 +329,56 @@ type LockManagerLike = {
   ): Promise<void>;
 };
 
+/** The two things claimed per squawk: the popup, and the chime (only a tab that can play it). */
+type Claim = "alert" | "chime";
+const CLAIM_KEY: Record<Claim, string> = { alert: ALERTED_KEY, chime: CHIMED_KEY };
+
+/** The best-effort claim: first to write the squawk's id wins. Not atomic across tabs. */
+function claimInStorage(kind: Claim, squawkId: number, raise: () => void): void {
+  const mark = String(squawkId);
+  if (storageGet(CLAIM_KEY[kind]) === mark) return;
+  storageSet(CLAIM_KEY[kind], mark);
+  raise();
+}
+
 /**
  * Run `raise` in exactly one tab of this browser for a squawk. Web Locks are atomic
  * across tabs, so two hidden tabs that hear the same event at the same instant
  * cannot both win (a `localStorage` read-then-write cannot promise that). Without
- * Web Locks, a stored claim narrows the window but cannot close it. A squawk with no
- * id always alerts.
+ * Web Locks, or when the lock request itself is refused (blocked site data, an
+ * opaque origin), a stored claim narrows the window but cannot close it: an alert
+ * twice is better than none. A squawk with no id always alerts.
  */
-function claimAlert(squawkId: unknown, raise: () => void): void {
+function claimOnce(kind: Claim, squawkId: unknown, raise: () => void): void {
   if (typeof squawkId !== "number") {
     raise();
     return;
   }
   const locks = (navigator as unknown as { locks?: LockManagerLike | null }).locks;
-  if (locks != null && typeof locks.request === "function") {
+  if (locks == null || typeof locks.request !== "function") {
+    claimInStorage(kind, squawkId, raise);
+    return;
+  }
+  let ran = false;
+  const fallBack = (err: unknown): void => {
+    if (ran) {
+      console.error("alerts: raising an alert failed", err);
+    } else {
+      claimInStorage(kind, squawkId, raise); // the lock never ran: do not lose the alert
+    }
+  };
+  try {
     locks
-      .request(`st-alert-${squawkId}`, { ifAvailable: true }, async (lock) => {
+      .request(`st-${kind}-${squawkId}`, { ifAvailable: true }, async (lock) => {
         if (lock === null) return; // another tab has it
+        ran = true;
         raise();
         await new Promise<void>((r) => setTimeout(r, CLAIM_HOLD_MS));
       })
-      .catch((err: unknown) => console.error("alerts: raising an alert failed", err));
-    return;
+      .catch(fallBack);
+  } catch (err) {
+    fallBack(err);
   }
-  const mark = String(squawkId);
-  if (storageGet(ALERTED_KEY) === mark) return;
-  storageSet(ALERTED_KEY, mark);
-  raise();
 }
 
 // ---------------------------------------------------------------------------
@@ -399,10 +436,11 @@ export function handleRealtimeEvent(event: AlertableEvent, now = Date.now()): vo
   unseen += 1;
   paintTitle();
   const { count, chime } = burst.hit(due.listId, now);
-  claimAlert((event.squawk as { id?: unknown } | null | undefined)?.id, () => {
-    if (chime) playChime();
-    raiseNotification(due, count);
-  });
+  const squawkId = (event.squawk as { id?: unknown } | null | undefined)?.id;
+  // The popup and the chime are claimed apart: a tab whose audio is still locked
+  // takes the popup but leaves the chime to a tab that can play it.
+  claimOnce("alert", squawkId, () => raiseNotification(due, count));
+  if (chime && audioReady()) claimOnce("chime", squawkId, playChime);
 }
 
 /** Start the title count and the audio unlock. Call once at bootstrap. */
@@ -424,6 +462,10 @@ export function initNotify(): void {
   document.addEventListener("visibilitychange", sync);
   window.addEventListener("focus", sync);
   window.addEventListener("blur", () => syncLooking());
+  // A closed or reloaded tab must not leave its mark behind for 10 s, or the
+  // other tabs would stay quiet for a viewer who is no longer looking.
+  window.addEventListener("pagehide", releaseLooking);
+  noticeRegion(); // in the page from the start, so a later message is announced
   window.setInterval(() => syncLooking(), LOOKING_BEAT_MS);
   syncLooking();
   // Another tab of this browser changed the toggles: follow it.
@@ -459,7 +501,7 @@ export function toggleCopy(
     return {
       label: "Alert: chime only",
       title:
-        "Notifications are blocked for this site, so you get the chime and the tab count but no popup. Allow them in the browser's site settings. Click to turn off.",
+        "The browser is not showing notifications for this site, so you get the chime and the tab count but no popup. Allow notifications in the browser's site settings. Click to turn off.",
     };
   }
   if (on) {
@@ -513,8 +555,9 @@ function repaintToggles(): void {
   for (const t of toggles) t.paint();
 }
 
-/** How long a notice stays on screen. */
+/** How long a notice stays on screen, and the beat between clearing and filling the region. */
 export const NOTICE_MS = 8_000;
+export const NOTICE_FILL_MS = 50;
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
 /**
@@ -522,6 +565,25 @@ let noticeTimer: ReturnType<typeof setTimeout> | undefined;
  * because a `title` is invisible on touch and to the keyboard.
  */
 function showNotice(message: string): void {
+  const el = noticeRegion();
+  // Empty it first, then fill it a moment later: a screen reader announces a change
+  // to a region it already holds, and a repeat of the same message is a change too.
+  el.textContent = "";
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    el.textContent = message;
+    noticeTimer = setTimeout(() => {
+      el.textContent = "";
+    }, NOTICE_MS);
+  }, NOTICE_FILL_MS);
+}
+
+/**
+ * The live region for notices. Always in the page and never `hidden` or
+ * `display:none` (a screen reader does not announce what changes in one); CSS hides
+ * it while empty.
+ */
+function noticeRegion(): HTMLElement {
   let el = document.getElementById("alert-notice");
   if (el === null) {
     el = document.createElement("div");
@@ -531,12 +593,7 @@ function showNotice(message: string): void {
     el.setAttribute("aria-live", "polite");
     document.body.append(el);
   }
-  el.textContent = message;
-  el.hidden = false;
-  clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => {
-    if (el !== null) el.hidden = true;
-  }, NOTICE_MS);
+  return el;
 }
 
 /**
