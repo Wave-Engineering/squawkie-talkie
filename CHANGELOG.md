@@ -7,6 +7,8 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-11-15 — per-list alerts
+
 ### Added
 - **Per-list alerts** (#177). Each list has an **Alert** toggle, on the lists screen and in the
   list header, off by default and kept per browser (`localStorage` `st.alerts`); there are no
