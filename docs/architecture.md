@@ -95,7 +95,12 @@ The client (`realtime.ts`) holds one `EventSource` and applies each event throug
 currently-mounted view's binding. It also surfaces connection liveness in the header — an
 on-air / off-air indicator (`connstatus.ts`) — and, since SSE has **no replay**, re-fetches
 and reconciles the active view on reconnect to recover events missed while offline (a focused
-control is never clobbered — invariant below). **Last-write-wins**, with one rule: a remote update is
+control is never clobbered — invariant below). Every live event is also handed to `notify.ts`
+first: a per-list **alert** (off by default, kept per browser in `localStorage` key `st.alerts`)
+raises a browser notification and a synthesised chime for a `squawk.created` on an alert-on list
+while the tab is hidden or unfocused (#177). It is client-only — no server state, no push — so it
+needs the tab alive, and a reconnect re-fetch is not an event and never alerts.
+**Last-write-wins**, with one rule: a remote update is
 **never applied to the control the viewer is actively in** — `shouldApplyToInput` checks
 `document.activeElement`'s `data-squawk-id`; the focused text input and the focused state
 `<select>` are left untouched (their own next change is the last write). This is the single

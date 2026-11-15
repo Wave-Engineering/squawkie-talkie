@@ -33,6 +33,10 @@ Two concepts only: **Squawk Lists** and **Squawks**.
   between squawks.
 - **Real-time** — changes by other viewers appear live (Server-Sent Events,
   last-write-wins); the box you're actively typing in is never clobbered.
+- **Per-list alerts** — an **Alert** toggle on each list (off by default, per browser). Turn it on
+  and a squawk added while you are away from the tab raises a browser notification and a soft
+  chime, and the tab title shows how many you missed. It needs the page open; nothing is pushed
+  to a closed tab.
 - **Glyph counts** — `○3 ✓2 ✗1 ◌4 ↗1` tallies on each list, live; empty states hide.
 - **Hover** a squawk to see who recorded it.
 - **Restrained cyberpunk** UI — near-black, one cyan accent, edge-glow states.

@@ -7,6 +7,17 @@ at `v0.3.0`**.
 
 ## [Unreleased]
 
+### Added
+- **Per-list alerts** (#177). Each list has an **Alert** toggle, on the lists screen and in the
+  list header, off by default and kept per browser (`localStorage` `st.alerts`); there are no
+  default lists. Turn it on and a squawk added to that list while the tab is hidden or unfocused
+  raises a browser notification and a soft synthesised chime (one per burst of adds within 3
+  seconds), and the tab title shows the unseen count until you return. The first turn-on asks for
+  notification permission; a blocked browser leaves the toggle off and says why. Nothing alerts
+  while you are looking, for updates or deletes, or from a reconnect re-fetch. Client-only, so no
+  API or schema change, and it needs the page open: a browser that discards a background tab ends
+  the stream until the tab is reloaded.
+
 ## [0.15.0] — 2026-11-05 — note locked once settled
 
 ### Changed

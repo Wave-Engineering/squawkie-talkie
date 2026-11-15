@@ -56,6 +56,15 @@ implementation; for design see [`architecture.md`](architecture.md).
 - **R-21** A remote update **never overwrites the control the viewer is actively in** — the
   focused text input *and* the focused state `<select>` are preserved; other rows still update.
 
+- **R-29** Every list has an **alert toggle**, on the lists screen and in the list header, **off by
+  default**; no list is on by default. It is kept per browser. Turning one on asks the browser for
+  notification permission once, and stays off, saying why, when the browser blocks it. While an
+  alert-on list's squawk is added and the viewer is not looking at the page (tab hidden or window
+  unfocused), the browser shows one notification and plays one soft chime per burst of adds (within
+  3 seconds), and the tab title carries the unseen count until the viewer returns. Nothing alerts
+  while the viewer is looking, for an update or delete, for a list with its alert off, or from a
+  reconnect re-fetch. Alerts need the page open: there is no push to a closed page.
+
 ## API contract
 
 - **R-22** Endpoints behave per [`architecture.md`](architecture.md): valid input succeeds

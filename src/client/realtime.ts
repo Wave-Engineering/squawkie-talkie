@@ -21,6 +21,7 @@
  */
 
 import type { ListWithStats, Squawk } from "../server/types.ts";
+import { handleRealtimeEvent } from "./notify.ts";
 
 // ---------------------------------------------------------------------------
 // Event shapes (mirror the broadcasts emitted by src/server/sse.ts)
@@ -258,6 +259,9 @@ export type Dispatch = (event: RealtimeEvent) => void;
  * reading focus from `document.activeElement` at delivery time.
  */
 export function dispatch(event: RealtimeEvent): void {
+  // Alerts (#177) hear every live event first; a re-fetch after a reconnect is
+  // not an event, so it can never alert.
+  handleRealtimeEvent(event);
   applyEvent(event, {
     view: activeView(),
     activeElement: document.activeElement,

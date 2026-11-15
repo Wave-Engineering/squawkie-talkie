@@ -1102,6 +1102,28 @@ body {
   border-color: rgba(0, 229, 255, 0.4);
 }
 
+/* Per-list alert toggle (#177): a quiet outline when off, accent-lit when on. The
+   same look on a list row and in the list-detail header. */
+.alert-toggle {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 0.875rem;
+  color: rgba(230, 237, 243, 0.7);
+  background: none;
+  border: 1px solid rgba(230, 237, 243, 0.15);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.alert-toggle:hover {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.4);
+}
+.alert-toggle--on {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.5);
+}
+
 .list-row__confirm {
   padding: var(--space-2) var(--space-3);
   font: inherit;
