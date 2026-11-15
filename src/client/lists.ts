@@ -26,6 +26,7 @@ import {
   replayTour,
   runTour,
 } from "./coachmarks.ts";
+import { buildAlertToggle, forgetList, noteListName } from "./notify.ts";
 import { setActiveView } from "./realtime.ts";
 import { navigate } from "./router.ts";
 
@@ -364,7 +365,11 @@ export function renderLists(container: HTMLElement): void {
     paintStats(list);
     statsPainters.set(list.id, paintStats);
 
-    row.append(changed, open, counts, controls);
+    // Alert toggle (#177): off unless this browser turned it on for this list.
+    noteListName(list.id, list.name);
+    const alertToggle = buildAlertToggle(list.id, () => list.name);
+
+    row.append(changed, open, counts, alertToggle, controls);
     return row;
   }
 
@@ -735,6 +740,7 @@ export function renderLists(container: HTMLElement): void {
         if (!freshIds.has(l.id)) {
           const row = rows.querySelector<HTMLElement>(`[data-list-id="${l.id}"]`);
           if (row) removeList(l.id, row);
+          forgetList(l.id); // its alert goes with it (#177)
         }
       }
     },

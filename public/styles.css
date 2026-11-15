@@ -1102,6 +1102,52 @@ body {
   border-color: rgba(0, 229, 255, 0.4);
 }
 
+/* Per-list alert toggle (#177): a quiet outline when off, accent-lit when on. The
+   same look on a list row and in the list-detail header. */
+.alert-toggle {
+  flex: none;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-size: 0.875rem;
+  color: rgba(230, 237, 243, 0.7);
+  background: none;
+  border: 1px solid rgba(230, 237, 243, 0.15);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.alert-toggle:hover {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.4);
+}
+.alert-toggle--on {
+  color: var(--accent);
+  border-color: rgba(0, 229, 255, 0.5);
+}
+.alert-toggle--degraded {
+  border-style: dashed;
+}
+.alert-notice {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  max-width: min(32rem, 92vw);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  border-radius: var(--radius);
+  z-index: 50;
+}
+/* Empty means invisible, not display:none: a screen reader only announces a
+   change to a live region that is in the page. */
+.alert-notice:empty {
+  opacity: 0;
+  pointer-events: none;
+  border-color: transparent;
+}
+
 .list-row__confirm {
   padding: var(--space-2) var(--space-3);
   font: inherit;

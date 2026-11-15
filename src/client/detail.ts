@@ -52,6 +52,7 @@ import {
   type CoachStep,
 } from "./coachmarks.ts";
 import { ensureInitials } from "./initials.ts";
+import { buildAlertToggle, noteListName } from "./notify.ts";
 import { activeSquawkId, setActiveView } from "./realtime.ts";
 import { registerView } from "./router.ts";
 
@@ -439,7 +440,9 @@ export async function renderList(
     changedBadge.hidden = changedIds.size === 0;
   };
   paintChanged();
-  header.append(title, counts, changedBadge);
+  // Alert toggle (#177): the same switch as on the Lists screen; off unless turned on here.
+  noteListName(id, detail.name);
+  header.append(title, counts, changedBadge, buildAlertToggle(id, () => detail.name));
   // Runs on every model change (a local state change, a remote update, an insert), so
   // it is also where a row that no longer belongs where it is gets moved (#167).
   const updateCounts = (): void => {

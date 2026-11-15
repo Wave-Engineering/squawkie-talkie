@@ -9,6 +9,7 @@
 import { mountConnStatus } from "./connstatus.ts";
 import { ensureFirstList, ensureInitials } from "./initials.ts";
 import { renderLists } from "./lists.ts";
+import { initNotify } from "./notify.ts";
 import { connect } from "./realtime.ts";
 import { registerView, startRouter } from "./router.ts";
 // Side-effect import: registers the list-detail view renderer (#8).
@@ -42,6 +43,8 @@ async function main(): Promise<void> {
   // the SSE stream (#9): changes by other viewers now arrive live.
   startRouter();
   connect();
+  // Per-list alerts (#177): title count, audio unlock, cross-tab toggle sync.
+  initNotify();
 }
 
 void main();
